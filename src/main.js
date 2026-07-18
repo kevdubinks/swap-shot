@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
+document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
+if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
 // ---------------------------------------------------------------------------
 // SWAP SHOT — FPS d'arène. Deux modes :

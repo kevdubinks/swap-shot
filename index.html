@@ -109,6 +109,11 @@
     }
     #overlay.hidden { display: none; }
     #overlay { padding: 16px; overflow-y: auto; }
+    #version-tag {
+      position: fixed; right: 10px; bottom: 6px; z-index: 11;
+      font-size: 11px; letter-spacing: 0.1em; color: rgba(232, 246, 255, 0.4);
+      pointer-events: none;
+    }
     #overlay h1 {
       font-size: clamp(30px, 7vw, 64px); font-weight: 900; letter-spacing: 0.18em;
       color: var(--neon); text-shadow: 0 0 24px rgba(77, 243, 255, 0.8);
@@ -299,6 +304,7 @@
     </div>
   </div>
 
+  <div id="version-tag"></div>
   <div id="overlay">
     <h1>SWAP<span class="accent">SHOT</span></h1>
     <div id="death-stats"></div>
