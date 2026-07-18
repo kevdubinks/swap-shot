@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+const VERSION = '0.2.0';
+
 // ---------------------------------------------------------------------------
 // SWAP SHOT — FPS d'arène. Deux modes :
 //  - Vagues : chaque drone touché meurt et échange sa position avec la tienne.
@@ -1443,7 +1445,7 @@ function tick() {
 window.__game = {
   state, player, bot, enemies, projectiles, platforms, settings, dmgIndicators,
   applySettings, step, shoot, resetGame, raycastWorld, hasLOS, damageBot, hurtPlayer,
-  useEcho, getEcho: () => echo, DIFFICULTIES, DIFF, touch, IS_TOUCH,
+  useEcho, getEcho: () => echo, DIFFICULTIES, DIFF, touch, IS_TOUCH, VERSION,
 };
 
 // caméra de menu
