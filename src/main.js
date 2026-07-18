@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Peer } from 'peerjs';
 
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -207,6 +207,94 @@ $('keys-reset').addEventListener('click', () => {
   renderKeybinds();
 });
 kbPanel.addEventListener('click', (e) => e.stopPropagation());
+
+// --- Classement en ligne (API Vercel + pseudo réservé par jeton local) ------------
+const LB_URL = 'https://swap-shot.vercel.app/api/lb';
+if (typeof settings.playerToken !== 'string' || settings.playerToken.length < 8) {
+  settings.playerToken = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
+  localStorage.setItem('swapshot-settings', JSON.stringify(settings));
+}
+if (typeof settings.pseudo !== 'string') settings.pseudo = '';
+
+const lbPanel = $('lb-panel');
+const lbRows = $('lb-rows');
+const lbAccount = $('lb-account');
+let lbBoard = 'general';
+
+function lbSubmit(board, score) {
+  if (!settings.pseudo) return;
+  fetch(LB_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ board, score, pseudo: settings.pseudo, token: settings.playerToken }),
+  }).catch(() => { /* hors-ligne : tant pis pour cette partie */ });
+}
+
+function renderLbAccount(err = '') {
+  if (settings.pseudo) {
+    lbAccount.innerHTML = `Connecté : <b>${settings.pseudo}</b>`;
+    return;
+  }
+  lbAccount.innerHTML = `<input id="lb-pseudo" maxlength="16" placeholder="Ton pseudo" autocomplete="off" />
+    <div class="diff-btn" id="lb-claim">S'inscrire</div>${err ? `<span class="err">${err}</span>` : ''}`;
+  $('lb-pseudo').addEventListener('keydown', (e) => e.stopPropagation());
+  $('lb-claim').addEventListener('click', async () => {
+    const pseudo = $('lb-pseudo').value.trim();
+    if (!/^[A-Za-z0-9À-ÿ_\-]{2,16}$/.test(pseudo)) return renderLbAccount('2-16 lettres/chiffres');
+    try {
+      const r = await fetch(LB_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ claim: true, pseudo, token: settings.playerToken }),
+      });
+      if (r.status === 403) return renderLbAccount('pseudo déjà pris');
+      if (!r.ok) return renderLbAccount('service indisponible');
+      settings.pseudo = pseudo;
+      applySettings();
+      renderLbAccount();
+    } catch {
+      renderLbAccount('pas de réseau');
+    }
+  });
+}
+
+async function loadLbBoard() {
+  lbRows.textContent = 'Chargement…';
+  try {
+    const r = await fetch(`${LB_URL}?board=${lbBoard}`);
+    if (r.status === 503) {
+      lbRows.innerHTML = '<div class="info">Le classement arrive bientôt — la base de données n\'est pas encore branchée.</div>';
+      return;
+    }
+    if (!r.ok) throw new Error('http ' + r.status);
+    const { rows } = await r.json();
+    if (!rows.length) {
+      lbRows.innerHTML = '<div class="info">Personne au classement — sois le premier à inscrire un score !</div>';
+      return;
+    }
+    lbRows.innerHTML = rows.map((row, i) =>
+      `<div class="lb-row${row.pseudo === settings.pseudo ? ' me' : ''}">
+        <span class="rank">${i + 1}.</span><span class="name">${row.pseudo}</span><span class="pts">${row.score}</span>
+      </div>`).join('');
+  } catch {
+    lbRows.innerHTML = '<div class="info">Classement injoignable (hors-ligne ?). Réessaie plus tard.</div>';
+  }
+}
+
+$('lb-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  renderLbAccount();
+  lbPanel.classList.add('open');
+  loadLbBoard();
+});
+$('lb-close').addEventListener('click', () => lbPanel.classList.remove('open'));
+lbPanel.addEventListener('click', (e) => e.stopPropagation());
+document.querySelectorAll('.lb-tab').forEach((t) =>
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.lb-tab').forEach((x) => x.classList.toggle('active', x === t));
+    lbBoard = t.dataset.b;
+    loadLbBoard();
+  }));
 
 applySettings(false);
 
@@ -1385,10 +1473,12 @@ function die() {
     : prev ? `${recap} (record : ${prev.score}, vague ${prev.wave})`
     : recap
   );
+  if (state.score > 0) lbSubmit(state.mode === 'nomove' ? 'nomove' : 'waves', state.score);
 }
 
 function duelEnd(playerWon) {
   if (playerWon) sfx.win(); else sfx.death();
+  if (playerWon) lbSubmit('wins', 1);
   showEndOverlay(
     playerWon ? 'VICTOIRE' : 'DÉFAITE',
     isVersus() ? `${net.score.me} – ${net.score.them}` : `${state.duel.player} – ${state.duel.bot}`
@@ -1745,6 +1835,19 @@ function updateCombo(dt) {
 // les deux navigateurs se parlent en direct. Chaque client est autoritaire sur
 // lui-même ; le tireur décide de ses touches (jeu entre amis, pas anti-cheat).
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+// STUN + relais TURN gratuits : sans TURN, deux joueurs derrière des box/4G
+// aux NAT stricts ne se trouvent jamais (« connexion » infinie)
+const PEER_OPTS = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    ],
+  },
+};
 const net = {
   peer: null, conn: null, isHost: false, code: null,
   ready: false,             // connecté, en attente du clic de lancement
@@ -1794,7 +1897,7 @@ function hostGame() {
   net.isHost = true;
   net.code = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
   netStatus('Création de la partie…');
-  net.peer = new Peer('swapshot-' + net.code);
+  net.peer = new Peer('swapshot-' + net.code, PEER_OPTS);
   net.peer.on('open', () => netStatus(`CODE : ${net.code} — partage-le à ton adversaire…`));
   net.peer.on('connection', (c) => { net.conn = c; wireConn(); });
   net.peer.on('error', (e) => netStatus('Erreur réseau : ' + e.type));
@@ -1805,17 +1908,25 @@ function joinGame(code) {
   cleanupNet();
   net.isHost = false;
   netStatus('Connexion…');
-  net.peer = new Peer();
+  net.peer = new Peer(PEER_OPTS);
   net.peer.on('open', () => {
     net.conn = net.peer.connect('swapshot-' + code.toUpperCase().trim());
     wireConn();
   });
   net.peer.on('error', (e) => netStatus('Erreur : ' + e.type + ' (code invalide ?)'));
+  // au-delà de 25 s sans canal ouvert, on arrête d'espérer et on explique
+  net.joinTimeout = setTimeout(() => {
+    if (!net.conn || !net.conn.open) {
+      cleanupNet();
+      netStatus('Connexion impossible — réessaie ; si ça persiste, un des deux réseaux bloque le pair-à-pair.');
+    }
+  }, 25000);
 }
 
 function wireConn() {
   const c = net.conn;
   c.on('open', () => {
+    if (net.joinTimeout) { clearTimeout(net.joinTimeout); net.joinTimeout = null; }
     if (net.isHost) {
       const drones = Array.from({ length: DUEL_DRONES }, () => randomDronePos(8));
       net.pendingDrones = drones;
@@ -1921,6 +2032,7 @@ function stopStateLoop() {
 
 function cleanupNet() {
   stopStateLoop();
+  if (net.joinTimeout) { clearTimeout(net.joinTimeout); net.joinTimeout = null; }
   try { if (net.conn) net.conn.close(); } catch { /* déjà fermée */ }
   try { if (net.peer) net.peer.destroy(); } catch { /* déjà détruit */ }
   net.conn = null; net.peer = null; net.ready = false; net.pendingDrones = null;
