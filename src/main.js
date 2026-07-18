@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 // ---------------------------------------------------------------------------
 // SWAP SHOT — FPS d'arène. Deux modes :
@@ -31,11 +31,14 @@ const PLAYER_DMG = 25;        // dégâts joueur → bot (4 tirs)
 
 // Profils de difficulté du bot : bruit de visée (rad), cadence (s), dégâts,
 // cooldown du swap-drone, probabilité de camper l'écho du joueur.
+// campChance : probabilité de contester l'écho ; deny : parmi les contests,
+// probabilité de choisir de DÉTRUIRE l'écho plutôt que de le camper en embuscade.
 const DIFFICULTIES = {
-  facile: { noise: 0.06,  fireMin: 1.0,  fireVar: 0.5,  dmg: 8,  swapCd: 8, campChance: 0 },
-  normal: { noise: 0.035, fireMin: 0.65, fireVar: 0.35, dmg: 12, swapCd: 6, campChance: 0.5 },
-  dur:    { noise: 0.02,  fireMin: 0.45, fireVar: 0.3,  dmg: 15, swapCd: 4, campChance: 1 },
+  facile: { noise: 0.06,  fireMin: 1.0,  fireVar: 0.5,  dmg: 8,  swapCd: 8, campChance: 0,   deny: 0 },
+  normal: { noise: 0.035, fireMin: 0.65, fireVar: 0.35, dmg: 12, swapCd: 6, campChance: 0.5, deny: 0.5 },
+  dur:    { noise: 0.02,  fireMin: 0.45, fireVar: 0.3,  dmg: 15, swapCd: 4, campChance: 1,   deny: 0.6 },
 };
+const ECHO_HP = 75;   // 3 tirs de bot pour détruire un écho
 const DIFF = () => DIFFICULTIES[settings.difficulty] || DIFFICULTIES.normal;
 
 // --- DOM -------------------------------------------------------------------
@@ -414,8 +417,9 @@ function createEcho(pos) {
   group.add(beam, ring);
   group.position.set(pos.x, Math.max(0, pos.y), pos.z);
   scene.add(group);
-  echo = { pos: new THREE.Vector3(pos.x, Math.max(0, pos.y), pos.z), life: ECHO_DURATION, group, beam, ring };
+  echo = { pos: new THREE.Vector3(pos.x, Math.max(0, pos.y), pos.z), life: ECHO_DURATION, group, beam, ring, hp: ECHO_HP, flash: 0 };
   echoSeq++;
+  echoHint.classList.remove('hurt');
   echoHint.style.display = 'block';
   beep({ type: 'sine', from: 600, to: 1100, dur: 0.25, gain: 0.1 });
 }
@@ -425,6 +429,23 @@ function removeEcho() {
   scene.remove(echo.group);
   echo = null;
   echoHint.style.display = 'none';
+}
+
+// le bot peut tirer sur l'écho pour te voler ta téléportation
+function damageEcho(amount) {
+  if (!echo) return;
+  echo.hp -= amount;
+  echo.flash = 0.25;
+  echoHint.classList.add('hurt');
+  if (echo.hp <= 0) {
+    const pos = echo.pos.clone();
+    addBurst(pos.clone().setY(pos.y + 1.2), 0xffd54d, 34);
+    addRing(new THREE.Vector3(pos.x, Math.max(0.1, pos.y + 0.1), pos.z), 0xffd54d);
+    removeEcho();
+    // verre brisé : ton écho est parti
+    beep({ type: 'sawtooth', from: 900, to: 80, dur: 0.45, gain: 0.16, at: pos });
+    beep({ type: 'square', from: 1400, to: 400, dur: 0.2, gain: 0.1, at: pos });
+  }
 }
 
 function useEcho() {
@@ -453,7 +474,8 @@ function updateEcho(dt) {
   }
   const pulse = 1 + 0.15 * Math.sin(state.time * 6);
   echo.ring.scale.set(pulse, pulse, 1);
-  echo.beam.material.opacity = 0.16 + 0.08 * Math.sin(state.time * 4);
+  echo.flash = Math.max(0, echo.flash - dt);
+  echo.beam.material.opacity = 0.16 + 0.08 * Math.sin(state.time * 4) + echo.flash * 2.2;
   echoTimer.textContent = Math.ceil(echo.life);
 }
 
@@ -595,12 +617,15 @@ function updateBot(dt) {
   const los = hasLOS(bEye, pEye);
   bot.losTimer = los ? 0 : bot.losTimer + dt;
 
-  // décision de camper l'écho : une seule fois par écho, selon la difficulté
+  // décision par écho, selon la difficulté : ignorer, CAMPER (embuscade
+  // silencieuse) ou DÉTRUIRE (déni : 3 tirs et ta téléportation disparaît)
   if (echo && bot.echoSeen !== echoSeq) {
     bot.echoSeen = echoSeq;
     bot.echoCamps = Math.random() < DIFF().campChance;
+    bot.echoPlan = Math.random() < DIFF().deny ? 'destroy' : 'camp';
   }
   const contesting = !!echo && bot.echoCamps;
+  const denying = contesting && bot.echoPlan === 'destroy';
 
   // --- déplacement
   bot.strafeTimer -= dt;
@@ -621,7 +646,8 @@ function updateBot(dt) {
     if (dEcho > 9) wish.add(toEcho);
     else if (dEcho < 5) wish.addScaledVector(toEcho, -1);
     else wish.add(eTangent);
-    bot.fireTimer = Math.min(bot.fireTimer, 0.35);  // réagit vite si le joueur apparaît
+    // gâchette nerveuse uniquement en embuscade — la destruction garde sa cadence
+    if (!denying) bot.fireTimer = Math.min(bot.fireTimer, 0.35);
   } else {
     if (!los || dist > 16) wish.add(flat);          // se rapprocher / retrouver la LOS
     else if (dist < 8) wish.addScaledVector(flat, -1); // garder ses distances
@@ -670,6 +696,16 @@ function updateBot(dt) {
     addTracer(bEye.clone().addScaledVector(dir, 1), end, 0xff8c3d);
     sfx.botShot(bEye);
     if (hitT < wallDist) hurtPlayer(DIFF().dmg, bEye);
+  } else if (denying && bot.fireTimer <= 0) {
+    // pas de joueur en vue : il démonte ton écho — chaque tir trahit sa position
+    const echoMid = echo.pos.clone().setY(echo.pos.y + 1.2);
+    const dEcho = echoMid.distanceTo(bEye);
+    if (dEcho < 30 && hasLOS(bEye, echoMid)) {
+      bot.fireTimer = DIFF().fireMin + Math.random() * DIFF().fireVar;
+      addTracer(bEye.clone().lerp(echoMid, 0.06), echoMid, 0xff8c3d);
+      sfx.botShot(bEye);
+      damageEcho(25);
+    }
   }
 
   // --- swap tactique via un drone : pour fuir (PV bas) ou retrouver le joueur
@@ -1445,7 +1481,7 @@ function tick() {
 window.__game = {
   state, player, bot, enemies, projectiles, platforms, settings, dmgIndicators,
   applySettings, step, shoot, resetGame, raycastWorld, hasLOS, damageBot, hurtPlayer,
-  useEcho, getEcho: () => echo, DIFFICULTIES, DIFF, touch, IS_TOUCH, VERSION,
+  useEcho, getEcho: () => echo, damageEcho, DIFFICULTIES, DIFF, touch, IS_TOUCH, VERSION,
 };
 
 // caméra de menu
