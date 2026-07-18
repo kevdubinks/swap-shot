@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 // ---------------------------------------------------------------------------
 // SWAP SHOT — FPS d'arène. Deux modes :
@@ -299,7 +299,7 @@ const enemyCoreGeo = new THREE.OctahedronGeometry(0.6, 0);
 const enemyShellGeo = new THREE.OctahedronGeometry(0.95, 1);
 function spawnEnemy(x, y, z) {
   const group = new THREE.Group();
-  const neutral = state.mode === 'duel';
+  const neutral = isDuel();
   const coreColor = neutral ? 0x4df3ff : 0xff3d6e;
   const core = new THREE.Mesh(
     enemyCoreGeo,
@@ -479,32 +479,15 @@ function updateEcho(dt) {
   echoTimer.textContent = Math.ceil(echo.life);
 }
 
-// --- Le BOT (joueur simulé, mode duel) ------------------------------------------
-const bot = {
-  pos: new THREE.Vector3(0, 0, -18),
-  vel: new THREE.Vector3(),
-  onGround: true,
-  hp: BOT_HP,
-  alive: false,
-  respawnTimer: 0,
-  yaw: 0,
-  strafeDir: 1,
-  strafeTimer: 0,
-  fireTimer: 1,
-  losTimer: 0,       // temps sans ligne de vue sur le joueur
-  stuckTimer: 0,
-  swapCd: 0,
-  grace: 0,
-  group: null,
-  hpFill: null,
-};
+// --- Les BOTS (joueurs simulés, modes duel 1v1 et 1v2) ---------------------------
+const isDuel = () => state.mode === 'duel' || state.mode === 'duel2';
 
-function buildBotMesh() {
+function makeBot(color) {
   const group = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0xff8c3d, emissive: 0xff8c3d, emissiveIntensity: 0.7, roughness: 0.4, metalness: 0.3,
-  });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.8, 4, 12), bodyMat);
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.4, 0.8, 4, 12),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7, roughness: 0.4, metalness: 0.3 })
+  );
   body.position.y = 0.95;
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(0.28, 16, 12),
@@ -516,7 +499,6 @@ function buildBotMesh() {
     new THREE.MeshBasicMaterial({ color: 0xffd54d })
   );
   visor.position.set(0, 1.7, -0.22);
-  // barre de vie flottante
   const barBg = new THREE.Mesh(
     new THREE.PlaneGeometry(1.1, 0.12),
     new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false })
@@ -528,17 +510,31 @@ function buildBotMesh() {
   );
   barFill.position.set(0, 2.25, 0.001);
   group.add(body, head, visor, barBg, barFill);
-  bot.group = group;
-  bot.hpFill = barFill;
-  bot.barBg = barBg;
+  return {
+    color,
+    pos: new THREE.Vector3(0, 0, -18),
+    vel: new THREE.Vector3(),
+    onGround: true,
+    hp: BOT_HP, alive: false, respawnTimer: 0,
+    yaw: 0, strafeDir: 1, strafeTimer: 0, fireTimer: 1,
+    losTimer: 0, stuckTimer: 0, swapCd: 0, grace: 0,
+    rangeOffset: 0,          // distance de combat préférée décalée par coéquipier
+    echoSeen: -1, echoCamps: false, echoPlan: 'camp',
+    group, hpFill: barFill, barBg,
+  };
 }
-buildBotMesh();
+const botPool = [makeBot(0xff8c3d), makeBot(0xb06bff)];   // orange, violet
+const bots = [];   // bots actifs de la partie en cours
 
-function botEye() {
-  return new THREE.Vector3(bot.pos.x, bot.pos.y + 1.5, bot.pos.z);
+// handicap d'équipe : à 2 bots, chacun tape moins fort et tire moins vite
+const teamDmg = () => (bots.length > 1 ? 0.75 : 1);
+const teamFire = () => (bots.length > 1 ? 1.3 : 1);
+
+function botEye(b) {
+  return new THREE.Vector3(b.pos.x, b.pos.y + 1.5, b.pos.z);
 }
 
-function respawnBot() {
+function respawnBot(b) {
   // apparaît loin du joueur
   let best = null, bestD = -1;
   for (let i = 0; i < 12; i++) {
@@ -547,48 +543,48 @@ function respawnBot() {
     const d = Math.hypot(x - player.pos.x, z - player.pos.z);
     if (d > bestD) { bestD = d; best = { x, z }; }
   }
-  bot.pos.set(best.x, 0, best.z);
-  bot.vel.set(0, 0, 0);
-  bot.hp = BOT_HP;
-  bot.alive = true;
-  bot.grace = 1;
-  bot.swapCd = 2;
-  bot.fireTimer = 1.2;
-  scene.add(bot.group);
-  addRing(new THREE.Vector3(best.x, 0.1, best.z), 0xff8c3d);
+  b.pos.set(best.x, 0, best.z);
+  b.vel.set(0, 0, 0);
+  b.hp = BOT_HP;
+  b.alive = true;
+  b.grace = 1;
+  b.swapCd = 2;
+  b.fireTimer = 1.2;
+  scene.add(b.group);
+  addRing(new THREE.Vector3(best.x, 0.1, best.z), b.color);
 }
 
-function damageBot(amount, hitPoint) {
-  if (!bot.alive || bot.grace > 0) return;
-  bot.hp -= amount;
+function damageBot(b, amount, hitPoint) {
+  if (!b.alive || b.grace > 0) return;
+  b.hp -= amount;
   addBurst(hitPoint, 0xffd54d, 10);
   sfx.hitmark();
-  if (bot.hp <= 0) {
-    bot.alive = false;
-    bot.respawnTimer = 3;
-    scene.remove(bot.group);
-    addBurst(botEye(), 0xff8c3d, 40);
-    addRing(new THREE.Vector3(bot.pos.x, Math.max(0.1, bot.pos.y + 0.1), bot.pos.z), 0xff8c3d);
-    sfx.botDeath(bot.pos);
+  if (b.hp <= 0) {
+    b.alive = false;
+    b.respawnTimer = 3;
+    scene.remove(b.group);
+    addBurst(botEye(b), b.color, 40);
+    addRing(new THREE.Vector3(b.pos.x, Math.max(0.1, b.pos.y + 0.1), b.pos.z), b.color);
+    sfx.botDeath(b.pos);
     state.duel.player += 1;
     updateDuelHud();
     if (state.duel.player >= DUEL_TARGET) { duelEnd(true); return; }
-    createEcho(bot.pos);   // 10 s pour décider de voler sa position (E)
+    createEcho(b.pos);   // 10 s pour décider de voler sa position (E)
   }
 }
 
-// Le bot utilise la même règle que le joueur : tirer sur un drone = swap.
-function botSwapViaDrone(drone) {
+// Les bots utilisent la même règle que le joueur : tirer sur un drone = swap.
+function botSwapViaDrone(b, drone) {
   const dronePos = drone.mesh.position.clone();
-  addTracer(botEye(), dronePos, 0xff8c3d);
-  killDrone(drone, botEye());
-  bot.pos.set(dronePos.x, Math.max(0, dronePos.y - 0.8), dronePos.z);
-  bot.vel.set(0, 0, 0);
-  bot.onGround = false;
+  addTracer(botEye(b), dronePos, b.color);
+  killDrone(drone, botEye(b));
+  b.pos.set(dronePos.x, Math.max(0, dronePos.y - 0.8), dronePos.z);
+  b.vel.set(0, 0, 0);
+  b.onGround = false;
   // pas d'invulnérabilité post-swap : tracker le bot à travers sa TP doit payer
-  bot.swapCd = DIFF().swapCd;
-  addRing(new THREE.Vector3(dronePos.x, Math.max(0.1, dronePos.y - 1), dronePos.z), 0xff8c3d);
-  addBurst(dronePos, 0xff8c3d);
+  b.swapCd = DIFF().swapCd;
+  addRing(new THREE.Vector3(dronePos.x, Math.max(0.1, dronePos.y - 1), dronePos.z), b.color);
+  addBurst(dronePos, b.color);
   sfx.botSwap(dronePos);
 }
 
@@ -596,90 +592,100 @@ function killDrone(drone, burstAt) {
   drone.alive = false;
   scene.remove(drone.mesh);
   if (burstAt) addBurst(burstAt, 0x4df3ff, 14);
-  if (state.mode === 'duel') droneRespawns.push(DRONE_RESPAWN);
+  if (isDuel()) droneRespawns.push(DRONE_RESPAWN);
 }
 
-function updateBot(dt) {
-  if (!bot.alive) {
-    bot.respawnTimer -= dt;
-    if (bot.respawnTimer <= 0 && state.phase === 'playing') respawnBot();
+function updateBot(b, dt) {
+  if (!b.alive) {
+    b.respawnTimer -= dt;
+    if (b.respawnTimer <= 0 && state.phase === 'playing') respawnBot(b);
     return;
   }
-  bot.grace = Math.max(0, bot.grace - dt);
-  bot.swapCd = Math.max(0, bot.swapCd - dt);
+  b.grace = Math.max(0, b.grace - dt);
+  b.swapCd = Math.max(0, b.swapCd - dt);
   // la grâce de respawn est LISIBLE : le bot clignote tant qu'il est invulnérable
-  bot.group.visible = bot.grace <= 0 || Math.sin(state.time * 30) > 0;
+  b.group.visible = b.grace <= 0 || Math.sin(state.time * 30) > 0;
 
   const pEye = eyePos();
-  const bEye = botEye();
+  const bEye = botEye(b);
   const toPlayer = new THREE.Vector3().subVectors(pEye, bEye);
   const dist = toPlayer.length();
   const los = hasLOS(bEye, pEye);
-  bot.losTimer = los ? 0 : bot.losTimer + dt;
+  b.losTimer = los ? 0 : b.losTimer + dt;
 
   // décision par écho, selon la difficulté : ignorer, CAMPER (embuscade
-  // silencieuse) ou DÉTRUIRE (déni : 3 tirs et ta téléportation disparaît)
-  if (echo && bot.echoSeen !== echoSeq) {
-    bot.echoSeen = echoSeq;
-    bot.echoCamps = Math.random() < DIFF().campChance;
-    bot.echoPlan = Math.random() < DIFF().deny ? 'destroy' : 'camp';
+  // silencieuse) ou DÉTRUIRE (déni : 3 tirs et ta téléportation disparaît).
+  // À 2 bots, un seul conteste chaque écho — l'autre reste sur le joueur.
+  if (echo && b.echoSeen !== echoSeq) {
+    b.echoSeen = echoSeq;
+    const eligible = bots.length <= 1 || bots[echoSeq % bots.length] === b;
+    b.echoCamps = eligible && Math.random() < DIFF().campChance;
+    b.echoPlan = Math.random() < DIFF().deny ? 'destroy' : 'camp';
   }
-  const contesting = !!echo && bot.echoCamps;
-  const denying = contesting && bot.echoPlan === 'destroy';
+  const contesting = !!echo && b.echoCamps;
+  const denying = contesting && b.echoPlan === 'destroy';
 
   // --- déplacement
-  bot.strafeTimer -= dt;
-  if (bot.strafeTimer <= 0) {
-    bot.strafeDir = Math.random() < 0.5 ? -1 : 1;
-    bot.strafeTimer = 0.8 + Math.random() * 1.2;
+  b.strafeTimer -= dt;
+  if (b.strafeTimer <= 0) {
+    b.strafeDir = Math.random() < 0.5 ? -1 : 1;
+    b.strafeTimer = 0.8 + Math.random() * 1.2;
   }
   const flat = new THREE.Vector3(toPlayer.x, 0, toPlayer.z).normalize();
-  const tangent = new THREE.Vector3(-flat.z, 0, flat.x).multiplyScalar(bot.strafeDir);
+  const tangent = new THREE.Vector3(-flat.z, 0, flat.x).multiplyScalar(b.strafeDir);
   const wish = new THREE.Vector3();
   if (contesting && (!los || dist > 18)) {
     // CONTEST : se poste à ~5-9 m de l'écho, tourne autour, gâchette nerveuse
-    const toEcho = new THREE.Vector3().subVectors(echo.pos, bot.pos);
+    const toEcho = new THREE.Vector3().subVectors(echo.pos, b.pos);
     toEcho.y = 0;
     const dEcho = toEcho.length();
     toEcho.normalize();
-    const eTangent = new THREE.Vector3(-toEcho.z, 0, toEcho.x).multiplyScalar(bot.strafeDir);
+    const eTangent = new THREE.Vector3(-toEcho.z, 0, toEcho.x).multiplyScalar(b.strafeDir);
     if (dEcho > 9) wish.add(toEcho);
     else if (dEcho < 5) wish.addScaledVector(toEcho, -1);
     else wish.add(eTangent);
     // gâchette nerveuse uniquement en embuscade — la destruction garde sa cadence
-    if (!denying) bot.fireTimer = Math.min(bot.fireTimer, 0.35);
+    if (!denying) b.fireTimer = Math.min(b.fireTimer, 0.35);
   } else {
-    if (!los || dist > 16) wish.add(flat);          // se rapprocher / retrouver la LOS
-    else if (dist < 8) wish.addScaledVector(flat, -1); // garder ses distances
-    if (los) wish.add(tangent);                      // strafe seulement en combat
+    // distance préférée décalée par coéquipier : l'un presse, l'autre couvre
+    if (!los || dist > 16 + b.rangeOffset) wish.add(flat);
+    else if (dist < 8 + b.rangeOffset * 0.5) wish.addScaledVector(flat, -1);
+    if (los) wish.add(tangent);
+  }
+  // espacement d'équipe : ne pas se marcher dessus
+  for (const o of bots) {
+    if (o === b || !o.alive) continue;
+    const away = new THREE.Vector3(b.pos.x - o.pos.x, 0, b.pos.z - o.pos.z);
+    const d = away.length();
+    if (d > 0.01 && d < 4) wish.addScaledVector(away.normalize(), (4 - d) / 4);
   }
   if (wish.lengthSq() > 0) wish.normalize();
 
   // saute si bloqué contre un obstacle
-  const hSpeed = Math.hypot(bot.vel.x, bot.vel.z);
+  const hSpeed = Math.hypot(b.vel.x, b.vel.z);
   let wantJump = false;
-  if (wish.lengthSq() > 0 && hSpeed < 1.2 && bot.onGround) {
-    bot.stuckTimer += dt;
-    if (bot.stuckTimer > 0.4) { wantJump = true; bot.stuckTimer = 0; }
+  if (wish.lengthSq() > 0 && hSpeed < 1.2 && b.onGround) {
+    b.stuckTimer += dt;
+    if (b.stuckTimer > 0.4) { wantJump = true; b.stuckTimer = 0; }
   } else {
-    bot.stuckTimer = 0;
+    b.stuckTimer = 0;
   }
 
-  moveBody(bot, wish, wantJump, dt, BOT_MOVE_SPEED);
+  moveBody(b, wish, wantJump, dt, BOT_MOVE_SPEED);
 
   // orientation visuelle + barre de vie face caméra
-  bot.group.position.copy(bot.pos);
-  bot.group.rotation.y = Math.atan2(-toPlayer.x, -toPlayer.z) + Math.PI;
-  bot.hpFill.scale.x = Math.max(0.001, bot.hp / BOT_HP);
-  bot.hpFill.position.x = -(1 - bot.hp / BOT_HP) * 0.53;
-  bot.hpFill.material.color.setHex(bot.hp > 40 ? 0x2fe6a8 : 0xff3d6e);
-  bot.barBg.lookAt(camera.position);
-  bot.hpFill.lookAt(camera.position);
+  b.group.position.copy(b.pos);
+  b.group.rotation.y = Math.atan2(-toPlayer.x, -toPlayer.z) + Math.PI;
+  b.hpFill.scale.x = Math.max(0.001, b.hp / BOT_HP);
+  b.hpFill.position.x = -(1 - b.hp / BOT_HP) * 0.53;
+  b.hpFill.material.color.setHex(b.hp > 40 ? 0x2fe6a8 : 0xff3d6e);
+  b.barBg.lookAt(camera.position);
+  b.hpFill.lookAt(camera.position);
 
   // --- tir : hitscan bruité, seulement avec ligne de vue
-  bot.fireTimer -= dt;
-  if (los && dist < 42 && bot.fireTimer <= 0) {
-    bot.fireTimer = DIFF().fireMin + Math.random() * DIFF().fireVar;
+  b.fireTimer -= dt;
+  if (los && dist < 42 && b.fireTimer <= 0) {
+    b.fireTimer = (DIFF().fireMin + Math.random() * DIFF().fireVar) * teamFire();
     const dir = new THREE.Vector3().subVectors(pEye, bEye).normalize();
     dir.add(new THREE.Vector3().randomDirection().multiplyScalar(DIFF().noise)).normalize();
     const wallDist = raycastWorld(bEye, dir);
@@ -693,16 +699,16 @@ function updateBot(dt) {
       if (closest.distanceTo(targetPos) < 0.55 && proj < hitT) hitT = proj;
     }
     const end = bEye.clone().addScaledVector(dir, Math.min(hitT, wallDist, 60));
-    addTracer(bEye.clone().addScaledVector(dir, 1), end, 0xff8c3d);
+    addTracer(bEye.clone().addScaledVector(dir, 1), end, b.color);
     sfx.botShot(bEye);
-    if (hitT < wallDist) hurtPlayer(DIFF().dmg, bEye);
-  } else if (denying && bot.fireTimer <= 0) {
+    if (hitT < wallDist) hurtPlayer(DIFF().dmg * teamDmg(), bEye);
+  } else if (denying && b.fireTimer <= 0) {
     // pas de joueur en vue : il démonte ton écho — chaque tir trahit sa position
     const echoMid = echo.pos.clone().setY(echo.pos.y + 1.2);
     const dEcho = echoMid.distanceTo(bEye);
     if (dEcho < 30 && hasLOS(bEye, echoMid)) {
-      bot.fireTimer = DIFF().fireMin + Math.random() * DIFF().fireVar;
-      addTracer(bEye.clone().lerp(echoMid, 0.06), echoMid, 0xff8c3d);
+      b.fireTimer = (DIFF().fireMin + Math.random() * DIFF().fireVar) * teamFire();
+      addTracer(bEye.clone().lerp(echoMid, 0.06), echoMid, b.color);
       sfx.botShot(bEye);
       damageEcho(25);
     }
@@ -710,14 +716,14 @@ function updateBot(dt) {
 
   // --- swap tactique via un drone : pour fuir (PV bas) ou retrouver le joueur
   // (jamais pendant qu'il campe l'écho : il tient sa position)
-  if (!contesting && bot.swapCd <= 0 && (bot.hp < 35 || bot.losTimer > 2.5)) {
+  if (!contesting && b.swapCd <= 0 && (b.hp < 35 || b.losTimer > 2.5)) {
     let best = null, bestD = Infinity;
     for (const e of enemies) {
       if (!e.alive) continue;
       const d = e.mesh.position.distanceTo(bEye);
       if (d < bestD && hasLOS(bEye, e.mesh.position)) { best = e; bestD = d; }
     }
-    if (best) botSwapViaDrone(best);
+    if (best) botSwapViaDrone(b, best);
   }
 }
 
@@ -900,7 +906,7 @@ function tryFullscreen() {
 const keys = new Set();
 document.addEventListener('keydown', (e) => {
   keys.add(e.code);
-  if (e.code === 'KeyE' && state.mode === 'duel') useEcho();
+  if (e.code === 'KeyE' && isDuel()) useEcho();
 });
 document.addEventListener('keyup', (e) => keys.delete(e.code));
 
@@ -926,6 +932,7 @@ function startGame(mode) {
 $('play-waves').addEventListener('click', (e) => { e.stopPropagation(); startGame('waves'); });
 $('play-nomove').addEventListener('click', (e) => { e.stopPropagation(); startGame('nomove'); });
 $('play-duel').addEventListener('click', (e) => { e.stopPropagation(); startGame('duel'); });
+$('play-duel2').addEventListener('click', (e) => { e.stopPropagation(); startGame('duel2'); });
 
 overlay.addEventListener('click', () => {
   if (state.phase === 'paused') {
@@ -971,8 +978,10 @@ function shoot() {
   // ligne de vue, le tir se verrouille dessus — viser au pouce reste jouable
   if (IS_TOUCH) {
     const candidates = enemies.filter((e) => e.alive).map((e) => e.mesh.position.clone());
-    if (state.mode === 'duel' && bot.alive && bot.grace <= 0) {
-      candidates.push(new THREE.Vector3(bot.pos.x, bot.pos.y + 1.0, bot.pos.z));
+    if (isDuel()) {
+      for (const b of bots) {
+        if (b.alive && b.grace <= 0) candidates.push(new THREE.Vector3(b.pos.x, b.pos.y + 1.0, b.pos.z));
+      }
     }
     let bestDir = null, bestAng = 0.105;
     for (const c of candidates) {
@@ -1001,20 +1010,24 @@ function shoot() {
     }
   }
 
-  // bot : 2 sphères (tête, torse) — dégâts, PAS de swap entre joueurs
-  let botT = Infinity, botHitPoint = null;
-  if (state.mode === 'duel' && bot.alive) {
-    for (const [center, r] of [
-      [new THREE.Vector3(bot.pos.x, bot.pos.y + 1.6, bot.pos.z), 0.4 * aimAssist],
-      [new THREE.Vector3(bot.pos.x, bot.pos.y + 0.9, bot.pos.z), 0.55 * aimAssist],
-    ]) {
-      const toC = center.clone().sub(origin);
-      const proj = toC.dot(dir);
-      if (proj < 0 || proj > wallDist) continue;
-      const closest = origin.clone().addScaledVector(dir, proj);
-      if (closest.distanceTo(center) <= r && proj < botT) {
-        botT = proj;
-        botHitPoint = closest;
+  // bots : 2 sphères chacun (tête, torse) — dégâts, PAS de swap entre joueurs
+  let botT = Infinity, botHitPoint = null, hitBot = null;
+  if (isDuel()) {
+    for (const b of bots) {
+      if (!b.alive) continue;
+      for (const [center, r] of [
+        [new THREE.Vector3(b.pos.x, b.pos.y + 1.6, b.pos.z), 0.4 * aimAssist],
+        [new THREE.Vector3(b.pos.x, b.pos.y + 0.9, b.pos.z), 0.55 * aimAssist],
+      ]) {
+        const toC = center.clone().sub(origin);
+        const proj = toC.dot(dir);
+        if (proj < 0 || proj > wallDist) continue;
+        const closest = origin.clone().addScaledVector(dir, proj);
+        if (closest.distanceTo(center) <= r && proj < botT) {
+          botT = proj;
+          botHitPoint = closest;
+          hitBot = b;
+        }
       }
     }
   }
@@ -1022,7 +1035,7 @@ function shoot() {
   const muzzle = origin.clone().addScaledVector(dir, 0.8).add(new THREE.Vector3(0, -0.15, 0));
   if (botT < droneT) {
     addTracer(muzzle, botHitPoint);
-    damageBot(PLAYER_DMG, botHitPoint);
+    damageBot(hitBot, PLAYER_DMG, botHitPoint);
   } else if (bestDrone) {
     addTracer(muzzle, bestDrone.mesh.position.clone());
     doSwap(bestDrone);
@@ -1045,7 +1058,7 @@ function doSwap(drone) {
   addBurst(dronePos, 0x4df3ff);
 
   // score/combo : modes vagues et swap-only (en duel, le swap est de la mobilité)
-  if (state.mode !== 'duel') {
+  if (!isDuel()) {
     state.combo = state.comboTimer > 0 ? state.combo + 1 : 1;
     state.comboTimer = COMBO_WINDOW;
     state.score += 100 * state.combo;
@@ -1102,16 +1115,18 @@ function hurtPlayer(amount, sourcePos = null) {
   if (sourcePos) addDmgIndicator(sourcePos);
   if (player.hp <= 0) {
     player.hp = 0;
-    if (state.mode === 'duel') {
+    if (isDuel()) {
       state.duel.bot += 1;
       updateDuelHud();
       if (state.duel.bot >= DUEL_TARGET) { duelEnd(false); updateHpBar(); return; }
-      // réapparition immédiate loin du bot, avec grâce
+      // réapparition immédiate loin des bots, avec grâce
       addBurst(eyePos(), 0xff3d6e, 40);
       sfx.death();
       let best = null, bestD = -1;
       for (const [sx, sz] of [[-24, -24], [24, -24], [-24, 24], [24, 24], [0, 24], [0, -24]]) {
-        const d = Math.hypot(sx - bot.pos.x, sz - bot.pos.z);
+        let d = Infinity;
+        for (const b of bots) if (b.alive) d = Math.min(d, Math.hypot(sx - b.pos.x, sz - b.pos.z));
+        if (d === Infinity) d = 1;
         if (d > bestD) { bestD = d; best = [sx, sz]; }
       }
       player.pos.set(best[0], 0, best[1]);
@@ -1184,8 +1199,8 @@ function resetGame(mode = state.mode) {
   for (const p of projectiles) scene.remove(p.mesh);
   for (const fx of effects) scene.remove(fx.mesh);
   enemies.length = 0; projectiles.length = 0; effects.length = 0; droneRespawns.length = 0;
-  scene.remove(bot.group);
-  bot.alive = false;
+  for (const b of botPool) { scene.remove(b.group); b.alive = false; }
+  bots.length = 0;
   removeEcho();
 
   state.score = 0; state.wave = 1; state.combo = 0; state.comboTimer = 0; state.waveCooldown = 0;
@@ -1200,15 +1215,22 @@ function resetGame(mode = state.mode) {
   hudCombo.classList.remove('show');
   updateHpBar();
 
-  if (mode === 'duel') {
-    waveLabel.textContent = 'Duel';
+  if (isDuel()) {
+    const count = mode === 'duel2' ? 2 : 1;
+    waveLabel.textContent = count === 2 ? 'Duel 1v2' : 'Duel';
     for (let i = 0; i < DUEL_DRONES; i++) {
       const p = randomDronePos(8);
       spawnEnemy(p.x, p.y, p.z);
     }
     updateDuelHud();
-    bot.respawnTimer = 0;
-    respawnBot();
+    for (let i = 0; i < count; i++) {
+      const b = botPool[i];
+      b.rangeOffset = i * 5;   // le 2e bot combat plus loin : pince naturelle
+      b.echoSeen = -1;
+      b.respawnTimer = 0;
+      bots.push(b);
+      respawnBot(b);
+    }
   } else {
     waveLabel.textContent = 'Vague';
     spawnWave(1);
@@ -1329,7 +1351,7 @@ function updateEnemies(dt) {
     e.shell.rotation.y -= dt * 1.2;
     e.shell.rotation.x += dt * 0.8;
 
-    if (state.mode === 'duel') {
+    if (isDuel()) {
       // drone neutre : dérive douce autour de son ancre, ne tire pas
       e.mesh.position.set(
         THREE.MathUtils.clamp(e.anchor.x + Math.sin(state.time * 0.25 + e.bobPhase) * 2.5, -(ARENA_HALF - 2), ARENA_HALF - 2),
@@ -1367,7 +1389,7 @@ function updateEnemies(dt) {
     }
   }
 
-  if (state.mode === 'duel') {
+  if (isDuel()) {
     // respawn des drones neutres
     for (let i = droneRespawns.length - 1; i >= 0; i--) {
       droneRespawns[i] -= dt;
@@ -1464,8 +1486,12 @@ function step(dt) {
     state.time += dt;
     updatePlayer(dt);
     updateEnemies(dt);
-    if (state.mode === 'duel') { updateBot(dt); updateEcho(dt); }
-    else updateProjectiles(dt);
+    if (isDuel()) {
+      for (const b of bots) updateBot(b, dt);
+      updateEcho(dt);
+    } else {
+      updateProjectiles(dt);
+    }
     updateCombo(dt);
   }
   updateEffects(dt);
@@ -1479,7 +1505,7 @@ function tick() {
 
 // hook de debug (tests automatisés / console)
 window.__game = {
-  state, player, bot, enemies, projectiles, platforms, settings, dmgIndicators,
+  state, player, bots, botPool, enemies, projectiles, platforms, settings, dmgIndicators,
   applySettings, step, shoot, resetGame, raycastWorld, hasLOS, damageBot, hurtPlayer,
   useEcho, getEcho: () => echo, damageEcho, DIFFICULTIES, DIFF, touch, IS_TOUCH, VERSION,
 };
