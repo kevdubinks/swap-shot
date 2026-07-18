@@ -179,6 +179,34 @@
     /* sur tactile : pas d'aide clavier, réglages compacts */
     body.touch #overlay .controls { display: none; }
 
+    /* remapping clavier */
+    body.touch #keys-setting { display: none; }
+    #keybind-panel {
+      display: none; position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      z-index: 40; min-width: 320px; padding: 20px 26px;
+      background: rgba(5, 10, 18, 0.96); border: 1px solid rgba(77, 243, 255, 0.5);
+      border-radius: 12px;
+    }
+    #keybind-panel.open { display: block; }
+    #keybind-panel h2 { font-size: 16px; letter-spacing: 0.12em; color: var(--neon); margin-bottom: 6px; }
+    .kb-hint { font-size: 11px; color: rgba(232, 246, 255, 0.55); margin-bottom: 12px; }
+    .kb-row {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 24px; padding: 6px 0; border-bottom: 1px solid rgba(77, 243, 255, 0.12);
+    }
+    .kb-row span { font-size: 13px; letter-spacing: 0.06em; }
+    .kb-key {
+      min-width: 84px; text-align: center; padding: 4px 12px; cursor: pointer;
+      border: 1px solid rgba(77, 243, 255, 0.45); border-radius: 6px;
+      font-size: 12px; font-weight: 700; color: var(--neon);
+    }
+    .kb-key:hover { border-color: var(--neon); }
+    .kb-key.listening {
+      border-color: #ffd54d; color: #ffd54d;
+      animation: pulse 0.8s ease-in-out infinite;
+    }
+    .kb-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+
     /* éditeur de disposition des touches (mobile) */
     #layout-setting { display: none; }
     body.touch #layout-setting { display: flex; }
@@ -278,6 +306,15 @@
     <div class="tbtn" id="btn-pause">❚❚</div>
   </div>
   <div id="rotate-hint">📱 Tourne ton téléphone en paysage</div>
+  <div id="keybind-panel">
+    <h2>⌨ Touches clavier</h2>
+    <p class="kb-hint">Clique une action, puis appuie sur la nouvelle touche.</p>
+    <div id="keybind-rows"></div>
+    <div class="kb-actions">
+      <div class="diff-btn" id="keys-reset">Réinitialiser</div>
+      <div class="diff-btn" id="keys-done">✓ Terminé</div>
+    </div>
+  </div>
   <div id="layout-bar">
     <span>Glisse les boutons où tu veux</span>
     <div class="diff-btn" id="layout-reset">Réinitialiser</div>
@@ -336,6 +373,10 @@
       <div class="setting" id="layout-setting">
         <span class="label">Touches tactiles</span>
         <div class="diff-btn" id="layout-btn">✥ Déplacer les touches</div>
+      </div>
+      <div class="setting" id="keys-setting">
+        <span class="label">Clavier</span>
+        <div class="diff-btn" id="keys-btn">⌨ Changer les touches</div>
       </div>
     </div>
     <div id="mode-buttons">

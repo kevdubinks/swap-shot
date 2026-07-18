@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-const VERSION = '0.4.1';
+const VERSION = '0.5.0';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -81,6 +81,38 @@ settings.fov = THREE.MathUtils.clamp(settings.fov, 60, 120);
 if (!['facile', 'normal', 'dur'].includes(settings.difficulty)) settings.difficulty = 'normal';
 if (typeof settings.layout !== 'object' || settings.layout === null) settings.layout = {};
 
+// touches clavier réassignables (code physique + étiquette d'affichage)
+const DEFAULT_KEYS = {
+  forward: { code: 'KeyW', label: 'Z' },
+  back:    { code: 'KeyS', label: 'S' },
+  left:    { code: 'KeyA', label: 'Q' },
+  right:   { code: 'KeyD', label: 'D' },
+  jump:    { code: 'Space', label: 'ESPACE' },
+  echo:    { code: 'KeyE', label: 'E' },
+};
+const KEY_ACTIONS = [
+  ['forward', 'Avancer'],
+  ['back', 'Reculer'],
+  ['left', 'Gauche'],
+  ['right', 'Droite'],
+  ['jump', 'Sauter'],
+  ['echo', "Utiliser l'Écho"],
+];
+if (typeof settings.keys !== 'object' || settings.keys === null) settings.keys = {};
+for (const a of Object.keys(DEFAULT_KEYS)) {
+  if (!settings.keys[a] || typeof settings.keys[a].code !== 'string') {
+    settings.keys[a] = { ...DEFAULT_KEYS[a] };
+  }
+}
+const key = (action) => settings.keys[action].code;
+
+function updateControlsHint() {
+  const k = settings.keys;
+  const move = [k.forward.label, k.left.label, k.back.label, k.right.label].join(' ');
+  document.querySelector('#overlay .controls').textContent =
+    `${move} : BOUGER — SOURIS : VISER — CLIC : TIRER — ${k.jump.label} : SAUTER — ${k.echo.label} : ÉCHO`;
+}
+
 const sensSlider = $('sens-slider');
 const fovSlider = $('fov-slider');
 function applySettings(save = true) {
@@ -90,6 +122,7 @@ function applySettings(save = true) {
   $('fov-val').textContent = settings.fov + '°';
   document.querySelectorAll('.diff-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.diff === settings.difficulty));
+  updateControlsHint();
   camera.fov = settings.fov;
   camera.updateProjectionMatrix();
   if (save) localStorage.setItem('swapshot-settings', JSON.stringify(settings));
@@ -99,6 +132,75 @@ fovSlider.addEventListener('input', () => { settings.fov = parseInt(fovSlider.va
 document.querySelectorAll('.diff-btn').forEach((b) =>
   b.addEventListener('click', (e) => { e.stopPropagation(); settings.difficulty = b.dataset.diff; applySettings(); }));
 $('settings').addEventListener('click', (e) => e.stopPropagation());
+
+// --- panneau de remapping clavier -----------------------------------------------
+const kbPanel = $('keybind-panel');
+const kbRows = $('keybind-rows');
+let kbListening = null;   // action en cours de réassignation
+
+function keyDisplayLabel(e) {
+  const special = { ' ': 'ESPACE', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Shift: 'MAJ', Control: 'CTRL', Alt: 'ALT', Tab: 'TAB' };
+  if (special[e.key] !== undefined) return special[e.key];
+  return e.key.length === 1 ? e.key.toUpperCase() : e.key.toUpperCase();
+}
+
+function renderKeybinds() {
+  kbRows.innerHTML = '';
+  for (const [action, label] of KEY_ACTIONS) {
+    const row = document.createElement('div');
+    row.className = 'kb-row';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const keyEl = document.createElement('div');
+    keyEl.className = 'kb-key' + (kbListening === action ? ' listening' : '');
+    keyEl.textContent = kbListening === action ? '…' : settings.keys[action].label;
+    keyEl.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      kbListening = action;
+      renderKeybinds();
+    });
+    row.append(name, keyEl);
+    kbRows.appendChild(row);
+  }
+}
+
+// capture prioritaire : la touche pressée pendant l'écoute n'atteint pas le jeu
+document.addEventListener('keydown', (e) => {
+  if (!kbListening) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key !== 'Escape') {
+    const chosen = { code: e.code, label: keyDisplayLabel(e) };
+    // conflit : on échange avec l'action qui utilisait déjà cette touche
+    for (const a of Object.keys(settings.keys)) {
+      if (a !== kbListening && settings.keys[a].code === chosen.code) {
+        settings.keys[a] = { ...settings.keys[kbListening] };
+      }
+    }
+    settings.keys[kbListening] = chosen;
+    applySettings();
+  }
+  kbListening = null;
+  renderKeybinds();
+}, { capture: true });
+
+$('keys-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  kbListening = null;
+  renderKeybinds();
+  kbPanel.classList.add('open');
+});
+$('keys-done').addEventListener('click', () => {
+  kbListening = null;
+  kbPanel.classList.remove('open');
+});
+$('keys-reset').addEventListener('click', () => {
+  for (const a of Object.keys(DEFAULT_KEYS)) settings.keys[a] = { ...DEFAULT_KEYS[a] };
+  applySettings();
+  renderKeybinds();
+});
+kbPanel.addEventListener('click', (e) => e.stopPropagation());
+
 applySettings(false);
 
 function onResize() {
@@ -908,7 +1010,7 @@ function tryFullscreen() {
 const keys = new Set();
 document.addEventListener('keydown', (e) => {
   keys.add(e.code);
-  if (e.code === 'KeyE' && isDuel()) useEcho();
+  if (e.code === key('echo') && isDuel()) useEcho();
 });
 document.addEventListener('keyup', (e) => keys.delete(e.code));
 
@@ -1317,15 +1419,15 @@ function updatePlayer(dt) {
       if (wish.lengthSq() > 1) wish.normalize();
       wish.applyEuler(new THREE.Euler(0, player.yaw, 0));
     } else {
-      // e.code = position physique → ZQSD marche en AZERTY
-      const fwd = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-      const strafe = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+      // touches réassignables (défaut : e.code physique → ZQSD marche en AZERTY)
+      const fwd = (keys.has(key('forward')) ? 1 : 0) - (keys.has(key('back')) ? 1 : 0);
+      const strafe = (keys.has(key('right')) ? 1 : 0) - (keys.has(key('left')) ? 1 : 0);
       wish.set(strafe, 0, -fwd);
       if (wish.lengthSq() > 0) wish.normalize().applyEuler(new THREE.Euler(0, player.yaw, 0));
     }
   }
 
-  moveBody(player, wish, !frozen && (keys.has('Space') || touch.jumpQueued), dt);
+  moveBody(player, wish, !frozen && (keys.has(key('jump')) || touch.jumpQueued), dt);
   touch.jumpQueued = false;
 
   if (state.time - player.lastHurt > 4 && player.hp < 100 && player.hp > 0) {
