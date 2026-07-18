@@ -268,6 +268,24 @@
       box-shadow: 0 0 24px rgba(255, 61, 110, 0.5);
       animation-delay: 1.2s;
     }
+    #multi-row { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
+    #overlay .cta.versus {
+      background: transparent; color: #2fe6a8;
+      border: 2px solid #2fe6a8; box-shadow: 0 0 18px rgba(47, 230, 168, 0.35);
+      animation: none; font-size: 13px; padding: 10px 22px;
+    }
+    #overlay .cta.versus:hover { background: rgba(47, 230, 168, 0.15); }
+    #multi-code {
+      width: 92px; padding: 9px 0; text-align: center; text-transform: uppercase;
+      font-size: 16px; font-weight: 700; letter-spacing: 0.3em; color: #2fe6a8;
+      background: rgba(5, 10, 18, 0.6); border: 1px solid rgba(47, 230, 168, 0.5);
+      border-radius: 8px; outline: none; font-family: inherit;
+    }
+    #multi-status { min-height: 18px; font-size: 13px; color: #2fe6a8; letter-spacing: 0.08em; }
+    @media (max-height: 520px), (max-width: 760px) {
+      #overlay .cta.versus { font-size: 10px; padding: 7px 14px; }
+      #multi-code { width: 70px; font-size: 13px; }
+    }
 
     #settings {
       display: flex; gap: 40px; margin-top: 6px; cursor: default;
@@ -385,6 +403,12 @@
       <div class="cta duel" id="play-duel">Duel vs bot</div>
       <div class="cta duel2" id="play-duel2">1 v 2</div>
     </div>
+    <div id="multi-row">
+      <div class="cta versus" id="multi-host">⚔ Créer une partie</div>
+      <input id="multi-code" maxlength="4" placeholder="CODE" autocomplete="off" />
+      <div class="cta versus" id="multi-join">Rejoindre</div>
+    </div>
+    <div id="multi-status"></div>
     <div class="cta" id="resume-cta" style="display:none">Cliquer pour reprendre</div>
   </div>
 
