@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Peer } from 'peerjs';
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -21,6 +21,10 @@ const GRAVITY = -24;
 const MOVE_SPEED = 9;
 const AIR_CONTROL = 0.35;
 const JUMP_SPEED = 9;
+const AIR_JUMP_SPEED = 8.5;   // double saut (à la pression, rechargé au sol)
+const DASH_SPEED = 24;
+const DASH_TIME = 0.22;       // fenêtre pendant laquelle la vitesse dash est permise
+const DASH_CD = 1.4;
 const ENEMY_RADIUS = 0.9;
 const COMBO_WINDOW = 3.0;
 const SWAP_GRACE = 0.6;
@@ -89,6 +93,7 @@ const DEFAULT_KEYS = {
   left:    { code: 'KeyA', label: 'Q' },
   right:   { code: 'KeyD', label: 'D' },
   jump:    { code: 'Space', label: 'ESPACE' },
+  dash:    { code: 'ShiftLeft', label: 'MAJ' },
   echo:    { code: 'KeyE', label: 'E' },
 };
 const KEY_ACTIONS = [
@@ -97,6 +102,7 @@ const KEY_ACTIONS = [
   ['left', 'Gauche'],
   ['right', 'Droite'],
   ['jump', 'Sauter'],
+  ['dash', 'Dash'],
   ['echo', "Utiliser l'Écho"],
 ];
 if (typeof settings.keys !== 'object' || settings.keys === null) settings.keys = {};
@@ -111,7 +117,7 @@ function updateControlsHint() {
   const k = settings.keys;
   const move = [k.forward.label, k.left.label, k.back.label, k.right.label].join(' ');
   document.querySelector('#overlay .controls').textContent =
-    `${move} : BOUGER — SOURIS : VISER — CLIC : TIRER — ${k.jump.label} : SAUTER — ${k.echo.label} : ÉCHO`;
+    `${move} : BOUGER — CLIC : TIRER — ${k.jump.label} : SAUT ×2 — ${k.dash.label} : DASH — ${k.echo.label} : ÉCHO`;
 }
 
 const sensSlider = $('sens-slider');
@@ -388,6 +394,11 @@ const player = {
   lastHurt: -10,
   swapGrace: 0,
   fovPunch: 0,
+  airJumps: 1,
+  jumpHeld: false,
+  dashHeld: false,
+  dashCd: 0,
+  dashTime: 0,
 };
 
 const enemies = [];        // drones (hostiles en vagues, neutres en duel)
@@ -847,12 +858,12 @@ const IS_TOUCH = /[?&]touch=1/.test(location.search) ||
   (window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0);
 if (IS_TOUCH) document.body.classList.add('touch');
 
-const touch = { joy: new THREE.Vector2(), jumpQueued: false, moveId: null, lookId: null, lookLast: { x: 0, y: 0 }, lookStart: null, lookDrag: 0, joyCenter: { x: 0, y: 0 } };
+const touch = { joy: new THREE.Vector2(), jumpQueued: false, dashQueued: false, moveId: null, lookId: null, lookLast: { x: 0, y: 0 }, lookStart: null, lookDrag: 0, joyCenter: { x: 0, y: 0 } };
 const JOY_RADIUS = 48;
 let layoutEdit = false;   // mode « déplacer les touches »
 
 // positions personnalisées des boutons tactiles (en % de l'écran)
-const MOVABLE_KEYS = ['btn-fire', 'btn-jump', 'btn-pause', 'echo-hint'];
+const MOVABLE_KEYS = ['btn-fire', 'btn-jump', 'btn-dash', 'btn-pause', 'echo-hint'];
 function applyLayout() {
   for (const id of MOVABLE_KEYS) {
     const el = $(id);
@@ -949,6 +960,7 @@ if (IS_TOUCH) {
 
   $('btn-fire').addEventListener('touchstart', (e) => { e.preventDefault(); if (!layoutEdit && state.phase === 'playing') shoot(); }, { passive: false });
   $('btn-jump').addEventListener('touchstart', (e) => { e.preventDefault(); if (!layoutEdit) touch.jumpQueued = true; }, { passive: false });
+  $('btn-dash').addEventListener('touchstart', (e) => { e.preventDefault(); if (!layoutEdit) touch.dashQueued = true; }, { passive: false });
   $('btn-pause').addEventListener('touchstart', (e) => {
     e.preventDefault();
     if (layoutEdit || state.phase !== 'playing') return;
@@ -1530,8 +1542,50 @@ function updatePlayer(dt) {
     }
   }
 
-  moveBody(player, wish, !frozen && (keys.has(key('jump')) || touch.jumpQueued), dt);
+  // saut / double saut / dash — détection de PRESSION (pas de maintien)
+  const jumpHeld = !frozen && (keys.has(key('jump')) || touch.jumpQueued);
+  const jumpEdge = jumpHeld && !player.jumpHeld;
+  player.jumpHeld = jumpHeld;
+  const dashHeld = !frozen && (keys.has(key('dash')) || touch.dashQueued);
+  const dashEdge = dashHeld && !player.dashHeld;
+  player.dashHeld = dashHeld;
   touch.jumpQueued = false;
+  touch.dashQueued = false;
+
+  player.dashCd = Math.max(0, player.dashCd - dt);
+  player.dashTime = Math.max(0, player.dashTime - dt);
+
+  if (dashEdge && player.dashCd <= 0) {
+    // impulsion dans la direction du déplacement, ou du regard si immobile
+    const dir = wish.lengthSq() > 0.01
+      ? wish.clone().normalize()
+      : new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    player.vel.x = dir.x * DASH_SPEED;
+    player.vel.z = dir.z * DASH_SPEED;
+    if (player.vel.y < 0) player.vel.y = 0;   // le dash "porte" brièvement
+    player.dashTime = DASH_TIME;
+    player.dashCd = DASH_CD;
+    player.dashDir = dir;
+    player.fovPunch = Math.max(player.fovPunch, 0.6);
+    addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.8, player.pos.z), 0x4df3ff, 12);
+    beep({ type: 'sawtooth', from: 320, to: 70, dur: 0.16, gain: 0.11 });
+  }
+
+  // pendant le dash sans direction tenue : la friction ne doit pas le tuer
+  if (player.dashTime > 0 && wish.lengthSq() === 0 && player.dashDir) wish.copy(player.dashDir);
+
+  const wasGround = player.onGround;
+  moveBody(player, wish, jumpHeld, dt, player.dashTime > 0 ? DASH_SPEED : MOVE_SPEED);
+
+  if (player.onGround) {
+    player.airJumps = 1;
+  } else if (jumpEdge && !wasGround && player.airJumps > 0) {
+    // DOUBLE SAUT
+    player.airJumps--;
+    player.vel.y = AIR_JUMP_SPEED;
+    addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.2, player.pos.z), 0x9be8ff, 10);
+    beep({ type: 'sine', from: 420, to: 760, dur: 0.12, gain: 0.1 });
+  }
 
   if (state.time - player.lastHurt > 4 && player.hp < 100 && player.hp > 0) {
     player.hp = Math.min(100, player.hp + 5 * dt);
