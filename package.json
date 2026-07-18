@@ -1,0 +1,20 @@
+{
+  "name": "swap-shot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174 --strictPort",
+    "build": "vite build --base=./",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.166.0"
+  },
+  "devDependencies": {
+    "vite": "^5.3.0"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}

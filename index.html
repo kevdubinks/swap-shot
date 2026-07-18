@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <!-- mode app plein écran quand ajouté à l'écran d'accueil (iOS/Android) -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="SWAP SHOT" />
+  <meta name="theme-color" content="#05060a" />
+  <title>SWAP SHOT</title>
+  <style>
+    :root {
+      --neon: #4df3ff;
+      --danger: #ff3d6e;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #05060a; }
+    body { font-family: "Segoe UI", system-ui, sans-serif; color: #e8f6ff; user-select: none; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+
+    #hud { position: fixed; inset: 0; pointer-events: none; }
+
+    #crosshair {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 22px; height: 22px; opacity: 0.9;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: var(--neon);
+      box-shadow: 0 0 6px var(--neon);
+    }
+    #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+    #crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+
+    .panel {
+      position: absolute; padding: 10px 16px;
+      background: rgba(5, 10, 18, 0.55); border: 1px solid rgba(77, 243, 255, 0.35);
+      border-radius: 8px; backdrop-filter: blur(4px);
+      letter-spacing: 0.08em;
+    }
+    #stats { left: 20px; bottom: 20px; min-width: 210px; }
+    #wave-panel { right: 20px; top: 20px; text-align: right; }
+    .label { font-size: 11px; text-transform: uppercase; color: rgba(232, 246, 255, 0.55); }
+    .value { font-size: 26px; font-weight: 700; color: var(--neon); text-shadow: 0 0 10px rgba(77, 243, 255, 0.6); }
+
+    #hp-bar { margin-top: 6px; width: 100%; height: 10px; border: 1px solid rgba(77,243,255,.4); border-radius: 5px; overflow: hidden; }
+    #hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #2fe6a8, var(--neon)); transition: width .15s ease; }
+    #hp-fill.low { background: linear-gradient(90deg, #ff9e3d, var(--danger)); }
+
+    #echo-hint {
+      position: absolute; left: 50%; bottom: 12%; transform: translateX(-50%);
+      padding: 8px 18px; border-radius: 999px;
+      background: rgba(20, 15, 2, 0.6); border: 1px solid rgba(255, 213, 77, 0.7);
+      color: #ffd54d; font-size: 15px; font-weight: 700; letter-spacing: 0.12em;
+      text-shadow: 0 0 10px rgba(255, 213, 77, 0.7);
+      display: none;
+    }
+    #echo-hint kbd {
+      display: inline-block; padding: 1px 8px; margin: 0 4px;
+      border: 1px solid #ffd54d; border-radius: 5px; font-family: inherit;
+    }
+
+    #combo {
+      position: absolute; left: 50%; top: 38%; transform: translateX(-50%);
+      font-size: 34px; font-weight: 800; color: #ffd54d;
+      text-shadow: 0 0 14px rgba(255, 213, 77, .8);
+      opacity: 0; transition: opacity .2s ease, transform .2s ease;
+    }
+    #combo.show { opacity: 1; }
+
+    #flash {
+      position: absolute; inset: 0; background: #bffcff; opacity: 0; pointer-events: none;
+      transition: opacity .06s linear;
+    }
+    #hurt {
+      position: absolute; inset: 0; pointer-events: none; opacity: 0;
+      background: radial-gradient(ellipse at center, transparent 45%, rgba(255, 20, 60, 0.55) 100%);
+      transition: opacity .1s linear;
+    }
+
+    /* indicateurs directionnels de dégâts : arcs rouges autour du réticule */
+    .dmg-arc {
+      position: absolute; left: 50%; top: 50%;
+      width: 300px; height: 300px; margin: -150px 0 0 -150px;
+      pointer-events: none; will-change: transform, opacity;
+    }
+    .dmg-arc::before {
+      content: ""; position: absolute; left: 50%; top: 6px;
+      width: 110px; height: 26px; margin-left: -55px;
+      background: radial-gradient(ellipse at 50% 100%, rgba(255, 40, 80, 0.95) 0%, rgba(255, 40, 80, 0) 70%);
+      border-top: 3px solid rgba(255, 61, 110, 0.95);
+      border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+      box-shadow: 0 0 12px rgba(255, 61, 110, 0.7);
+    }
+
+    #overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 18px;
+      background: rgba(3, 5, 10, 0.82); backdrop-filter: blur(6px);
+      text-align: center; cursor: pointer; z-index: 10;
+    }
+    #overlay.hidden { display: none; }
+    #overlay { padding: 16px; overflow-y: auto; }
+    #overlay h1 {
+      font-size: clamp(30px, 7vw, 64px); font-weight: 900; letter-spacing: 0.18em;
+      color: var(--neon); text-shadow: 0 0 24px rgba(77, 243, 255, 0.8);
+    }
+    #overlay h1 .accent { color: #ffd54d; text-shadow: 0 0 24px rgba(255, 213, 77, 0.8); }
+    #overlay .tagline { font-size: 18px; max-width: 560px; line-height: 1.6; color: rgba(232,246,255,.85); }
+    #overlay .tagline b { color: #ffd54d; }
+    #overlay .controls { font-size: 13px; color: rgba(232,246,255,.5); letter-spacing: .1em; }
+    #overlay .cta {
+      margin-top: 10px; font-size: 15px; letter-spacing: .25em; text-transform: uppercase;
+      color: #05060a; background: var(--neon); padding: 12px 34px; border-radius: 999px;
+      box-shadow: 0 0 24px rgba(77,243,255,.5); font-weight: 700;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    #death-stats { font-size: 20px; color: #ffd54d; display: none; }
+    @keyframes pulse { 50% { transform: scale(1.05); } }
+
+    /* --- contrôles tactiles (activés via body.touch) --- */
+    #touch-controls { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+    body.touch #touch-controls { display: block; }
+    body.touch { touch-action: none; }
+    #joy-zone {
+      position: absolute; left: 0; bottom: 0; width: 45%; height: 65%;
+      pointer-events: auto; touch-action: none;
+    }
+    #joy-base {
+      position: absolute; width: 116px; height: 116px; margin: -58px 0 0 -58px;
+      border: 2px solid rgba(77, 243, 255, 0.5); border-radius: 50%;
+      background: rgba(77, 243, 255, 0.06); display: none;
+    }
+    #joy-stick {
+      position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+      margin: -26px 0 0 -26px; border-radius: 50%;
+      background: rgba(77, 243, 255, 0.35); border: 2px solid var(--neon);
+      box-shadow: 0 0 12px rgba(77, 243, 255, 0.5);
+    }
+    #look-zone {
+      position: absolute; right: 0; bottom: 0; width: 55%; height: 100%;
+      pointer-events: auto; touch-action: none;
+    }
+    .tbtn {
+      position: absolute; display: flex; align-items: center; justify-content: center;
+      border: 2px solid rgba(77, 243, 255, 0.55); border-radius: 50%;
+      background: rgba(77, 243, 255, 0.12); color: var(--neon);
+      pointer-events: auto; touch-action: none; user-select: none;
+      text-shadow: 0 0 8px rgba(77, 243, 255, 0.7);
+    }
+    .tbtn:active { background: rgba(77, 243, 255, 0.35); }
+    /* le TAP sur l'écran tire — le saut prend le coin du pouce, le tir devient un backup */
+    #btn-fire { right: 34px; bottom: 122px; width: 62px; height: 62px; font-size: 24px; border-color: rgba(255, 61, 110, 0.7); color: var(--danger); }
+    #btn-fire:active { background: rgba(255, 61, 110, 0.3); }
+    #btn-jump { right: 24px; bottom: 28px; width: 78px; height: 78px; font-size: 26px; }
+    #btn-pause { top: 14px; left: 50%; transform: translateX(-50%); width: 46px; height: 46px; font-size: 14px; border-radius: 12px; }
+    body.touch #echo-hint { pointer-events: auto; bottom: 24%; padding: 14px 26px; font-size: 17px; }
+    #rotate-hint {
+      display: none; position: fixed; inset: 0; z-index: 20;
+      align-items: center; justify-content: center; text-align: center;
+      background: rgba(3, 5, 10, 0.92); font-size: 22px; color: var(--neon);
+      pointer-events: none;
+    }
+    @media (orientation: portrait) { body.touch #rotate-hint { display: flex; } }
+
+    /* sur tactile : pas d'aide clavier, réglages compacts */
+    body.touch #overlay .controls { display: none; }
+
+    /* éditeur de disposition des touches (mobile) */
+    #layout-setting { display: none; }
+    body.touch #layout-setting { display: flex; }
+    #layout-bar {
+      display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 30; align-items: center; gap: 14px; padding: 8px 16px;
+      background: rgba(5, 10, 18, 0.85); border: 1px solid rgba(77, 243, 255, 0.5);
+      border-radius: 999px; font-size: 12px; letter-spacing: 0.06em;
+    }
+    body.layout-edit #layout-bar { display: flex; }
+    body.layout-edit #touch-controls { display: block; z-index: 25; }
+    body.layout-edit .tbtn, body.layout-edit #echo-hint {
+      outline: 2px dashed rgba(255, 213, 77, 0.8); outline-offset: 4px;
+    }
+    body.layout-edit #echo-hint { display: block !important; }
+    body.layout-edit #joy-zone, body.layout-edit #look-zone { pointer-events: none; }
+
+    /* petits écrans (téléphone en paysage : hauteur ~320-450px) */
+    @media (max-height: 520px), (max-width: 760px) {
+      #overlay { gap: 6px; padding: 8px; }
+      #overlay h1 { font-size: clamp(22px, 6vw, 40px); }
+      #overlay .tagline { font-size: 11px; line-height: 1.3; max-width: 92vw; }
+      #settings { margin-top: 0; }
+      #overlay .tagline br { display: none; }
+      #overlay .controls { font-size: 10px; }
+      #settings { gap: 14px; padding: 8px 12px; flex-wrap: wrap; justify-content: center; }
+      .setting input[type="range"] { width: 120px; }
+      .setting .label { font-size: 9px; }
+      .setting .val { font-size: 12px; }
+      .diff-btn { padding: 4px 10px; font-size: 10px; }
+      #mode-buttons { gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
+      #overlay .cta { font-size: 11px; padding: 9px 18px; letter-spacing: 0.15em; }
+      #death-stats { font-size: 14px; }
+      .panel { padding: 6px 10px; }
+      #stats { left: 10px; bottom: 10px; min-width: 140px; }
+      #wave-panel { right: 10px; top: 10px; }
+      .label { font-size: 9px; }
+      .value { font-size: 17px; }
+      #combo { font-size: 22px; }
+      #echo-hint { font-size: 13px; padding: 8px 16px; }
+      #btn-fire { width: 52px; height: 52px; bottom: 96px; right: 26px; font-size: 20px; }
+      #btn-jump { width: 64px; height: 64px; right: 18px; bottom: 20px; }
+    }
+
+    #mode-buttons { display: flex; gap: 24px; margin-top: 10px; }
+    .cta { cursor: pointer; }
+    #overlay .cta.duel {
+      background: #ff8c3d;
+      box-shadow: 0 0 24px rgba(255, 140, 61, 0.5);
+      animation-delay: 0.8s;
+    }
+    #overlay .cta.nomove {
+      background: #b06bff;
+      box-shadow: 0 0 24px rgba(176, 107, 255, 0.5);
+      animation-delay: 0.4s;
+    }
+
+    #settings {
+      display: flex; gap: 40px; margin-top: 6px; cursor: default;
+      padding: 14px 24px; border: 1px solid rgba(77, 243, 255, 0.25);
+      border-radius: 10px; background: rgba(5, 10, 18, 0.5);
+    }
+    .setting { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    .setting .label { font-size: 11px; }
+    .setting .val { font-size: 15px; font-weight: 700; color: var(--neon); }
+    .setting input[type="range"] {
+      width: 180px; accent-color: var(--neon); cursor: pointer;
+    }
+    .diff-row { display: flex; gap: 8px; }
+    .diff-btn {
+      padding: 5px 14px; border: 1px solid rgba(77, 243, 255, 0.4); border-radius: 999px;
+      font-size: 12px; letter-spacing: 0.06em; cursor: pointer; color: rgba(232, 246, 255, 0.8);
+      transition: all .15s ease;
+    }
+    .diff-btn:hover { border-color: var(--neon); }
+    .diff-btn.active {
+      background: var(--neon); color: #05060a; font-weight: 700;
+      box-shadow: 0 0 14px rgba(77, 243, 255, 0.5);
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="touch-controls">
+    <div id="joy-zone">
+      <div id="joy-base"><div id="joy-stick"></div></div>
+    </div>
+    <div id="look-zone"></div>
+    <div class="tbtn" id="btn-fire">◉</div>
+    <div class="tbtn" id="btn-jump">▲</div>
+    <div class="tbtn" id="btn-pause">❚❚</div>
+  </div>
+  <div id="rotate-hint">📱 Tourne ton téléphone en paysage</div>
+  <div id="layout-bar">
+    <span>Glisse les boutons où tu veux</span>
+    <div class="diff-btn" id="layout-reset">Réinitialiser</div>
+    <div class="diff-btn" id="layout-done">✓ Terminé</div>
+  </div>
+
+  <div id="hud">
+    <div id="crosshair"></div>
+    <div id="flash"></div>
+    <div id="hurt"></div>
+    <div id="dmg-container"></div>
+    <div id="combo"></div>
+    <div id="echo-hint">ÉCHO <kbd>E</kbd> <span id="echo-timer">10</span>s</div>
+    <div class="panel" id="stats">
+      <div class="label">Intégrité</div>
+      <div id="hp-bar"><div id="hp-fill"></div></div>
+      <div class="label" style="margin-top:8px">Score</div>
+      <div class="value" id="score">0</div>
+    </div>
+    <div class="panel" id="wave-panel">
+      <div class="label">Vague</div>
+      <div class="value" id="wave">1</div>
+      <div class="label" id="enemies-left" style="margin-top:4px">—</div>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <h1>SWAP<span class="accent">SHOT</span></h1>
+    <div id="death-stats"></div>
+    <p class="tagline">
+      Chaque drone touché est détruit… et <b>vous échangez instantanément vos positions</b>.<br />
+      Tuer, c'est se déplacer. Visez les drones en hauteur pour prendre l'avantage —<br />
+      mais attention où vous atterrissez.
+    </p>
+    <p class="controls">ZQSD / WASD — SOURIS : VISER — CLIC : TIRER — ESPACE : SAUTER</p>
+    <div id="settings">
+      <div class="setting">
+        <span class="label">Sensibilité</span>
+        <input type="range" id="sens-slider" min="0.2" max="6" step="0.05" value="1" />
+        <span class="val" id="sens-val">1.00</span>
+      </div>
+      <div class="setting">
+        <span class="label">Champ de vision (FOV)</span>
+        <input type="range" id="fov-slider" min="60" max="120" step="1" value="75" />
+        <span class="val" id="fov-val">75°</span>
+      </div>
+      <div class="setting">
+        <span class="label">Difficulté du bot</span>
+        <div class="diff-row" id="diff-row">
+          <div class="diff-btn" data-diff="facile">Facile</div>
+          <div class="diff-btn" data-diff="normal">Normal</div>
+          <div class="diff-btn" data-diff="dur">Difficile</div>
+        </div>
+      </div>
+      <div class="setting" id="layout-setting">
+        <span class="label">Touches tactiles</span>
+        <div class="diff-btn" id="layout-btn">✥ Déplacer les touches</div>
+      </div>
+    </div>
+    <div id="mode-buttons">
+      <div class="cta" id="play-waves">Vagues infinies</div>
+      <div class="cta nomove" id="play-nomove">Swap only</div>
+      <div class="cta duel" id="play-duel">Duel vs bot</div>
+    </div>
+    <div class="cta" id="resume-cta" style="display:none">Cliquer pour reprendre</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
