@@ -12,8 +12,14 @@
   <title>SWAP SHOT</title>
   <style>
     :root {
+      /* palette miroir de PAL dans src/fx.js — garder les deux synchronisées */
       --neon: #4df3ff;
       --danger: #ff3d6e;
+      --echo: #ffd54d;
+      --good: #2fe6a8;
+      --bot1: #ff8c3d;
+      --bot2: #b06bff;
+      --font-arcade: 'Press Start 2P', 'Segoe UI', monospace;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #05060a; }
@@ -43,23 +49,24 @@
     #stats { left: 20px; bottom: 20px; min-width: 210px; }
     #wave-panel { right: 20px; top: 20px; text-align: right; }
     .label { font-size: 11px; text-transform: uppercase; color: rgba(232, 246, 255, 0.55); }
-    .value { font-size: 26px; font-weight: 700; color: var(--neon); text-shadow: 0 0 10px rgba(77, 243, 255, 0.6); }
+    .value { font-family: var(--font-arcade); font-size: 16px; line-height: 1.5; color: var(--neon); text-shadow: 0 0 10px rgba(77, 243, 255, 0.6); }
 
     #hp-bar { margin-top: 6px; width: 100%; height: 10px; border: 1px solid rgba(77,243,255,.4); border-radius: 5px; overflow: hidden; }
-    #hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #2fe6a8, var(--neon)); transition: width .15s ease; }
+    #hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, var(--good), var(--neon)); transition: width .15s ease; }
     #hp-fill.low { background: linear-gradient(90deg, #ff9e3d, var(--danger)); }
 
     #echo-hint {
       position: absolute; left: 50%; bottom: 12%; transform: translateX(-50%);
       padding: 8px 18px; border-radius: 999px;
       background: rgba(20, 15, 2, 0.6); border: 1px solid rgba(255, 213, 77, 0.7);
-      color: #ffd54d; font-size: 15px; font-weight: 700; letter-spacing: 0.12em;
+      color: var(--echo); font-size: 15px; font-weight: 700; letter-spacing: 0.12em;
       text-shadow: 0 0 10px rgba(255, 213, 77, 0.7);
       display: none;
     }
     #echo-hint kbd {
-      display: inline-block; padding: 1px 8px; margin: 0 4px;
-      border: 1px solid #ffd54d; border-radius: 5px; font-family: inherit;
+      display: inline-block; padding: 2px 8px; margin: 0 4px;
+      border: 1px solid var(--echo); border-radius: 5px;
+      font-family: var(--font-arcade); font-size: 11px;
     }
     #echo-hint.hurt {
       border-color: var(--danger); color: var(--danger);
@@ -70,7 +77,7 @@
 
     #combo {
       position: absolute; left: 50%; top: 38%; transform: translateX(-50%);
-      font-size: 34px; font-weight: 800; color: #ffd54d;
+      font-family: var(--font-arcade); font-size: 20px; color: var(--echo);
       text-shadow: 0 0 14px rgba(255, 213, 77, .8);
       opacity: 0; transition: opacity .2s ease, transform .2s ease;
     }
@@ -111,24 +118,27 @@
     #overlay { padding: 16px; overflow-y: auto; }
     #version-tag {
       position: fixed; right: 10px; bottom: 6px; z-index: 11;
-      font-size: 11px; letter-spacing: 0.1em; color: rgba(232, 246, 255, 0.4);
+      font-family: var(--font-arcade); font-size: 8px; letter-spacing: 0.1em;
+      color: rgba(232, 246, 255, 0.4);
       pointer-events: none;
     }
     #overlay h1 {
-      font-size: clamp(30px, 7vw, 64px); font-weight: 900; letter-spacing: 0.18em;
+      font-family: var(--font-arcade); font-weight: 400;
+      font-size: clamp(18px, 4.5vw, 40px); letter-spacing: 0.1em; line-height: 1.4;
       color: var(--neon); text-shadow: 0 0 24px rgba(77, 243, 255, 0.8);
     }
-    #overlay h1 .accent { color: #ffd54d; text-shadow: 0 0 24px rgba(255, 213, 77, 0.8); }
+    #overlay h1 .accent { color: var(--echo); text-shadow: 0 0 24px rgba(255, 213, 77, 0.8); }
     #overlay .tagline { font-size: 18px; max-width: 560px; line-height: 1.6; color: rgba(232,246,255,.85); }
-    #overlay .tagline b { color: #ffd54d; }
+    #overlay .tagline b { color: var(--echo); }
     #overlay .controls { font-size: 13px; color: rgba(232,246,255,.5); letter-spacing: .1em; }
     #overlay .cta {
-      margin-top: 10px; font-size: 15px; letter-spacing: .25em; text-transform: uppercase;
+      margin-top: 10px; font-family: var(--font-arcade); font-size: 11px;
+      letter-spacing: .12em; text-transform: uppercase;
       color: #05060a; background: var(--neon); padding: 12px 34px; border-radius: 999px;
       box-shadow: 0 0 24px rgba(77,243,255,.5); font-weight: 700;
       animation: pulse 1.6s ease-in-out infinite;
     }
-    #death-stats { font-size: 20px; color: #ffd54d; display: none; }
+    #death-stats { font-family: var(--font-arcade); font-size: 13px; line-height: 1.7; color: var(--echo); display: none; }
     @keyframes pulse { 50% { transform: scale(1.05); } }
 
     /* --- contrôles tactiles (activés via body.touch) --- */
@@ -188,26 +198,26 @@
       border: 1px solid rgba(255, 213, 77, 0.5); border-radius: 12px;
     }
     #lb-panel.open { display: block; }
-    #lb-panel h2 { font-size: 16px; letter-spacing: 0.12em; color: #ffd54d; margin-bottom: 10px; }
+    #lb-panel h2 { font-size: 16px; letter-spacing: 0.12em; color: var(--echo); margin-bottom: 10px; }
     #lb-account { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; flex-wrap: wrap; }
     #lb-account input {
       width: 130px; padding: 6px 10px; font-size: 13px; font-family: inherit;
       color: #e8f6ff; background: rgba(5, 10, 18, 0.6);
       border: 1px solid rgba(255, 213, 77, 0.5); border-radius: 6px; outline: none;
     }
-    #lb-account b { color: #ffd54d; }
+    #lb-account b { color: var(--echo); }
     #lb-account .err { color: var(--danger); font-size: 11px; }
     #lb-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
-    .lb-tab.active { background: #ffd54d; color: #05060a; font-weight: 700; }
+    .lb-tab.active { background: var(--echo); color: #05060a; font-weight: 700; }
     .lb-row {
       display: flex; gap: 10px; padding: 5px 2px; font-size: 13px;
       border-bottom: 1px solid rgba(255, 213, 77, 0.12);
     }
     .lb-row .rank { width: 26px; color: rgba(232, 246, 255, 0.5); }
     .lb-row .name { flex: 1; }
-    .lb-row .pts { font-weight: 700; color: #ffd54d; }
+    .lb-row .pts { font-weight: 700; color: var(--echo); }
     .lb-row.me { background: rgba(255, 213, 77, 0.1); border-radius: 4px; }
-    .lb-row.me .name { color: #ffd54d; font-weight: 700; }
+    .lb-row.me .name { color: var(--echo); font-weight: 700; }
     #lb-rows .info { font-size: 12px; color: rgba(232, 246, 255, 0.55); padding: 10px 0; line-height: 1.5; }
 
     /* remapping clavier */
@@ -233,7 +243,7 @@
     }
     .kb-key:hover { border-color: var(--neon); }
     .kb-key.listening {
-      border-color: #ffd54d; color: #ffd54d;
+      border-color: var(--echo); color: var(--echo);
       animation: pulse 0.8s ease-in-out infinite;
     }
     .kb-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
@@ -258,7 +268,7 @@
     /* petits écrans (téléphone en paysage : hauteur ~320-450px) */
     @media (max-height: 520px), (max-width: 760px) {
       #overlay { gap: 6px; padding: 8px; }
-      #overlay h1 { font-size: clamp(22px, 6vw, 40px); }
+      #overlay h1 { font-size: clamp(14px, 4vw, 26px); }
       #overlay .tagline { font-size: 11px; line-height: 1.3; max-width: 92vw; }
       #settings { margin-top: 0; }
       #overlay .tagline br { display: none; }
@@ -269,14 +279,14 @@
       .setting .val { font-size: 12px; }
       .diff-btn { padding: 4px 10px; font-size: 10px; }
       #mode-buttons { gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
-      #overlay .cta { font-size: 11px; padding: 9px 18px; letter-spacing: 0.15em; }
-      #death-stats { font-size: 14px; }
+      #overlay .cta { font-size: 9px; padding: 9px 18px; letter-spacing: 0.1em; }
+      #death-stats { font-size: 10px; }
       .panel { padding: 6px 10px; }
       #stats { left: 10px; bottom: 10px; min-width: 140px; }
       #wave-panel { right: 10px; top: 10px; }
       .label { font-size: 9px; }
-      .value { font-size: 17px; }
-      #combo { font-size: 22px; }
+      .value { font-size: 12px; }
+      #combo { font-size: 14px; }
       #echo-hint { font-size: 13px; padding: 8px 16px; }
       #btn-fire { width: 52px; height: 52px; bottom: 96px; right: 26px; font-size: 20px; }
       #btn-jump { width: 64px; height: 64px; right: 18px; bottom: 20px; }
@@ -286,12 +296,12 @@
     #mode-buttons { display: flex; gap: 24px; margin-top: 10px; }
     .cta { cursor: pointer; }
     #overlay .cta.duel {
-      background: #ff8c3d;
+      background: var(--bot1);
       box-shadow: 0 0 24px rgba(255, 140, 61, 0.5);
       animation-delay: 0.8s;
     }
     #overlay .cta.nomove {
-      background: #b06bff;
+      background: var(--bot2);
       box-shadow: 0 0 24px rgba(176, 107, 255, 0.5);
       animation-delay: 0.4s;
     }
@@ -302,25 +312,27 @@
     }
     #multi-row { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
     #overlay .cta.versus {
-      background: transparent; color: #2fe6a8;
-      border: 2px solid #2fe6a8; box-shadow: 0 0 18px rgba(47, 230, 168, 0.35);
+      background: transparent; color: var(--good);
+      border: 2px solid var(--good); box-shadow: 0 0 18px rgba(47, 230, 168, 0.35);
       animation: none; font-size: 13px; padding: 10px 22px;
     }
     #overlay .cta.versus:hover { background: rgba(47, 230, 168, 0.15); }
     #multi-code {
       width: 92px; padding: 9px 0; text-align: center; text-transform: uppercase;
-      font-size: 16px; font-weight: 700; letter-spacing: 0.3em; color: #2fe6a8;
+      font-size: 16px; font-weight: 700; letter-spacing: 0.3em; color: var(--good);
       background: rgba(5, 10, 18, 0.6); border: 1px solid rgba(47, 230, 168, 0.5);
       border-radius: 8px; outline: none; font-family: inherit;
     }
-    #multi-status { min-height: 18px; font-size: 13px; color: #2fe6a8; letter-spacing: 0.08em; }
+    #multi-status { min-height: 18px; font-size: 13px; color: var(--good); letter-spacing: 0.08em; }
     @media (max-height: 520px), (max-width: 760px) {
       #overlay .cta.versus { font-size: 10px; padding: 7px 14px; }
       #multi-code { width: 70px; font-size: 13px; }
     }
 
     #settings {
-      display: flex; gap: 40px; margin-top: 6px; cursor: default;
+      display: flex; flex-wrap: wrap; justify-content: center;
+      gap: 22px 36px; margin-top: 6px; cursor: default;
+      max-width: min(880px, 94vw);
       padding: 14px 24px; border: 1px solid rgba(77, 243, 255, 0.25);
       border-radius: 10px; background: rgba(5, 10, 18, 0.5);
     }
@@ -431,6 +443,15 @@
           <div class="diff-btn" data-diff="facile">Facile</div>
           <div class="diff-btn" data-diff="normal">Normal</div>
           <div class="diff-btn" data-diff="dur">Difficile</div>
+        </div>
+      </div>
+      <div class="setting">
+        <span class="label">Affichage rétro</span>
+        <div class="diff-row" id="quality-row">
+          <div class="diff-btn" data-q="auto">Auto</div>
+          <div class="diff-btn" data-q="eleve">Élevé</div>
+          <div class="diff-btn" data-q="leger">Léger</div>
+          <div class="diff-btn" data-q="off">Off</div>
         </div>
       </div>
       <div class="setting" id="layout-setting">

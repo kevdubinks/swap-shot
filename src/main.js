@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { Peer } from 'peerjs';
+import '@fontsource/press-start-2p';
+import { PAL, createFX } from './fx.js';
 
-const VERSION = '0.8.0';
+const VERSION = '0.9.1';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -71,19 +73,27 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 $('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x05060a);
-scene.fog = new THREE.FogExp2(0x05060a, 0.022);
+scene.background = new THREE.Color(PAL.bg);
+scene.fog = new THREE.FogExp2(PAL.bg, 0.022);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
 
+// Détection tactile TÔT (la qualité « auto » du rendu en dépend) : écran
+// "grossier", ou ?touch=1 pour forcer (tests/hybrides)
+const IS_TOUCH = /[?&]touch=1/.test(location.search) ||
+  (window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0);
+if (IS_TOUCH) document.body.classList.add('touch');
+let fx = null;   // chaîne Rétro-Néon, assignée après la construction de l'arène
+
 // --- Réglages (persistés dans localStorage) -----------------------------------
-const settings = { sens: 1.0, fov: 75, difficulty: 'normal' };
+const settings = { sens: 1.0, fov: 75, difficulty: 'normal', quality: 'auto' };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('swapshot-settings') || '{}'));
 } catch { /* réglages corrompus : on garde les défauts */ }
 settings.sens = THREE.MathUtils.clamp(settings.sens, 0.2, 6);
 settings.fov = THREE.MathUtils.clamp(settings.fov, 60, 120);
 if (!['facile', 'normal', 'dur'].includes(settings.difficulty)) settings.difficulty = 'normal';
+if (!['auto', 'eleve', 'leger', 'off'].includes(settings.quality)) settings.quality = 'auto';
 if (typeof settings.layout !== 'object' || settings.layout === null) settings.layout = {};
 
 // touches clavier réassignables (code physique + étiquette d'affichage)
@@ -127,17 +137,24 @@ function applySettings(save = true) {
   fovSlider.value = settings.fov;
   $('sens-val').textContent = settings.sens.toFixed(2);
   $('fov-val').textContent = settings.fov + '°';
-  document.querySelectorAll('.diff-btn').forEach((b) =>
+  document.querySelectorAll('#diff-row .diff-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.diff === settings.difficulty));
+  document.querySelectorAll('#quality-row .diff-btn').forEach((b) =>
+    b.classList.toggle('active', b.dataset.q === settings.quality));
   updateControlsHint();
   camera.fov = settings.fov;
   camera.updateProjectionMatrix();
+  if (fx) fx.setQuality(settings.quality);
   if (save) localStorage.setItem('swapshot-settings', JSON.stringify(settings));
 }
 sensSlider.addEventListener('input', () => { settings.sens = parseFloat(sensSlider.value); applySettings(); });
 fovSlider.addEventListener('input', () => { settings.fov = parseInt(fovSlider.value, 10); applySettings(); });
-document.querySelectorAll('.diff-btn').forEach((b) =>
+// scopé à #diff-row : .diff-btn est aussi la classe de style des boutons des
+// panneaux (classement, clavier…) — un sélecteur global écraserait la difficulté
+document.querySelectorAll('#diff-row .diff-btn').forEach((b) =>
   b.addEventListener('click', (e) => { e.stopPropagation(); settings.difficulty = b.dataset.diff; applySettings(); }));
+document.querySelectorAll('#quality-row .diff-btn').forEach((b) =>
+  b.addEventListener('click', (e) => { e.stopPropagation(); settings.quality = b.dataset.q; applySettings(); }));
 $('settings').addEventListener('click', (e) => e.stopPropagation());
 
 // --- panneau de remapping clavier -----------------------------------------------
@@ -301,7 +318,8 @@ applySettings(false);
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  if (fx) fx.resize();
+  else renderer.setSize(window.innerWidth, window.innerHeight);
 }
 window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 300));
@@ -311,25 +329,14 @@ scene.add(new THREE.AmbientLight(0x334455, 1.2));
 const keyLight = new THREE.DirectionalLight(0x99ccff, 0.9);
 keyLight.position.set(12, 30, 8);
 scene.add(keyLight);
-const rimLight = new THREE.DirectionalLight(0xff3d6e, 0.35);
+const rimLight = new THREE.DirectionalLight(PAL.danger, 0.35);
 rimLight.position.set(-15, 10, -20);
 scene.add(rimLight);
 
-// --- Arène -----------------------------------------------------------------
-const floorMat = new THREE.MeshStandardMaterial({ color: 0x0a0f1a, roughness: 0.9, metalness: 0.2 });
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA_HALF * 2, ARENA_HALF * 2), floorMat);
-floor.rotation.x = -Math.PI / 2;
-scene.add(floor);
-
-const grid = new THREE.GridHelper(ARENA_HALF * 2, 30, 0x4df3ff, 0x123344);
-grid.material.transparent = true;
-grid.material.opacity = 0.5;
-grid.position.y = 0.01;
-scene.add(grid);
-
+// --- Arène (le sol-grille animé et l'horizon synthwave vivent dans fx.js) ----
 const wallMat = new THREE.MeshStandardMaterial({
-  color: 0x0d1626, roughness: 0.7, metalness: 0.4,
-  emissive: 0x0a2a33, emissiveIntensity: 0.6,
+  color: 0x0b0e20, roughness: 0.7, metalness: 0.4,
+  emissive: 0x150c38, emissiveIntensity: 0.7,
 });
 const WALL_H = 20;
 for (let i = 0; i < 4; i++) {
@@ -353,10 +360,10 @@ const PLATFORM_DEFS = [
 ];
 const platforms = [];  // { minX, maxX, minZ, maxZ, top }
 const platMat = new THREE.MeshStandardMaterial({
-  color: 0x11203a, roughness: 0.5, metalness: 0.5,
-  emissive: 0x123a55, emissiveIntensity: 0.5,
+  color: 0x10142e, roughness: 0.5, metalness: 0.5,
+  emissive: 0x1a1454, emissiveIntensity: 0.6,
 });
-const edgeMat = new THREE.LineBasicMaterial({ color: 0x4df3ff, transparent: true, opacity: 0.85 });
+const edgeMat = new THREE.LineBasicMaterial({ color: PAL.player, transparent: true, opacity: 0.85 });
 for (const [x, z, w, d, top] of PLATFORM_DEFS) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, top, d), platMat);
   mesh.position.set(x, top / 2, z);
@@ -366,6 +373,10 @@ for (const [x, z, w, d, top] of PLATFORM_DEFS) {
   scene.add(edges);
   platforms.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2, top });
 }
+
+// chaîne Rétro-Néon : post-processing + sol animé + ciel synthwave + néons murs
+fx = createFX(renderer, scene, camera, { arenaHalf: ARENA_HALF, wallHeight: WALL_H, isTouch: IS_TOUCH });
+fx.setQuality(settings.quality);
 
 // Rayon contre les plateformes (méthode des slabs). Retourne la distance du
 // premier impact, ou Infinity. Sert au clipping des tirs et à la ligne de vue.
@@ -504,14 +515,14 @@ const enemyShellGeo = new THREE.OctahedronGeometry(0.95, 1);
 function spawnEnemy(x, y, z) {
   const group = new THREE.Group();
   const neutral = isDuel();
-  const coreColor = neutral ? 0x4df3ff : 0xff3d6e;
+  const coreColor = neutral ? PAL.player : PAL.danger;
   const core = new THREE.Mesh(
     enemyCoreGeo,
     new THREE.MeshStandardMaterial({ color: coreColor, emissive: coreColor, emissiveIntensity: 1.6, roughness: 0.3 })
   );
   const shell = new THREE.Mesh(
     enemyShellGeo,
-    new THREE.MeshBasicMaterial({ color: neutral ? 0x9be8ff : 0xff88aa, wireframe: true, transparent: true, opacity: 0.5 })
+    new THREE.MeshBasicMaterial({ color: neutral ? PAL.playerSoft : PAL.dangerSoft, wireframe: true, transparent: true, opacity: 0.5 })
   );
   group.add(core, shell);
   group.position.set(x, y, z);
@@ -552,7 +563,7 @@ function projectileSpeed() { return 13 + state.wave * 0.8; }
 
 // --- Projectiles ennemis (mode vagues uniquement) ------------------------------
 const projGeo = new THREE.SphereGeometry(0.22, 8, 8);
-const projMat = new THREE.MeshBasicMaterial({ color: 0xffd54d });
+const projMat = new THREE.MeshBasicMaterial({ color: PAL.echo });
 function fireProjectile(fromPos) {
   const mesh = new THREE.Mesh(projGeo, projMat.clone());
   mesh.position.copy(fromPos);
@@ -567,7 +578,7 @@ function fireProjectile(fromPos) {
 }
 
 // --- Effets ------------------------------------------------------------------
-function addRing(pos, color = 0x4df3ff) {
+function addRing(pos, color = PAL.player) {
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.4, 0.55, 32),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false })
@@ -577,7 +588,7 @@ function addRing(pos, color = 0x4df3ff) {
   scene.add(ring);
   effects.push({ mesh: ring, life: 0.5, maxLife: 0.5, grow: 14 });
 }
-function addBurst(pos, color = 0xff3d6e, count = 26) {
+function addBurst(pos, color = PAL.danger, count = 26) {
   const geo = new THREE.BufferGeometry();
   const positions = new Float32Array(count * 3);
   const vels = [];
@@ -590,7 +601,7 @@ function addBurst(pos, color = 0xff3d6e, count = 26) {
   scene.add(pts);
   effects.push({ mesh: pts, life: 0.6, maxLife: 0.6, vels });
 }
-function addTracer(from, to, color = 0x4df3ff) {
+function addTracer(from, to, color = PAL.player) {
   const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
   scene.add(line);
@@ -609,12 +620,12 @@ function createEcho(pos) {
   const group = new THREE.Group();
   const beam = new THREE.Mesh(
     new THREE.CylinderGeometry(0.5, 0.5, 14, 16, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffd54d, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.MeshBasicMaterial({ color: PAL.echo, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
   );
   beam.position.y = 7;
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.7, 0.95, 32),
-    new THREE.MeshBasicMaterial({ color: 0xffd54d, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.MeshBasicMaterial({ color: PAL.echo, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.12;
@@ -645,8 +656,8 @@ function damageEcho(amount) {
   echoHint.classList.add('hurt');
   if (echo.hp <= 0) {
     const pos = echo.pos.clone();
-    addBurst(pos.clone().setY(pos.y + 1.2), 0xffd54d, 34);
-    addRing(new THREE.Vector3(pos.x, Math.max(0.1, pos.y + 0.1), pos.z), 0xffd54d);
+    addBurst(pos.clone().setY(pos.y + 1.2), PAL.echo, 34);
+    addRing(new THREE.Vector3(pos.x, Math.max(0.1, pos.y + 0.1), pos.z), PAL.echo);
     removeEcho();
     // verre brisé : ton écho est parti
     beep({ type: 'sawtooth', from: 900, to: 80, dur: 0.45, gain: 0.16, at: pos });
@@ -656,13 +667,15 @@ function damageEcho(amount) {
 
 function useEcho() {
   if (!echo || state.phase !== 'playing') return;
-  addBurst(eyePos(), 0xffd54d);
-  addRing(new THREE.Vector3(player.pos.x, Math.max(0.1, player.pos.y + 0.1), player.pos.z), 0xffd54d);
+  addBurst(eyePos(), PAL.echo);
+  addRing(new THREE.Vector3(player.pos.x, Math.max(0.1, player.pos.y + 0.1), player.pos.z), PAL.echo);
   player.pos.copy(echo.pos);
   player.onGround = false;
   player.swapGrace = SWAP_GRACE;
   player.fovPunch = 1;
-  addBurst(echo.pos.clone().setY(echo.pos.y + 1.2), 0xffd54d);
+  addBurst(echo.pos.clone().setY(echo.pos.y + 1.2), PAL.echo);
+  fx.wave(echo.pos.x, echo.pos.z, PAL.echo);
+  fx.punch(0.8);
   flashEl.style.opacity = '0.55';
   setTimeout(() => (flashEl.style.opacity = '0'), 70);
   beep({ type: 'sine', from: 250, to: 950, dur: 0.2, gain: 0.15 });
@@ -703,7 +716,7 @@ function makeBot(color) {
   head.position.y = 1.68;
   const visor = new THREE.Mesh(
     new THREE.BoxGeometry(0.34, 0.09, 0.1),
-    new THREE.MeshBasicMaterial({ color: 0xffd54d })
+    new THREE.MeshBasicMaterial({ color: PAL.echo })
   );
   visor.position.set(0, 1.7, -0.22);
   const barBg = new THREE.Mesh(
@@ -713,7 +726,7 @@ function makeBot(color) {
   barBg.position.y = 2.25;
   const barFill = new THREE.Mesh(
     new THREE.PlaneGeometry(1.06, 0.08),
-    new THREE.MeshBasicMaterial({ color: 0x2fe6a8, depthWrite: false })
+    new THREE.MeshBasicMaterial({ color: PAL.good, depthWrite: false })
   );
   barFill.position.set(0, 2.25, 0.001);
   group.add(body, head, visor, barBg, barFill);
@@ -730,7 +743,7 @@ function makeBot(color) {
     group, hpFill: barFill, barBg,
   };
 }
-const botPool = [makeBot(0xff8c3d), makeBot(0xb06bff)];   // orange, violet
+const botPool = [makeBot(PAL.bot1), makeBot(PAL.bot2)];   // orange, violet
 const bots = [];   // bots actifs de la partie en cours
 
 // handicap d'équipe : à 2 bots, chacun tape moins fort et tire moins vite
@@ -764,7 +777,7 @@ function respawnBot(b) {
 function damageBot(b, amount, hitPoint) {
   if (!b.alive || b.grace > 0) return;
   b.hp -= amount;
-  addBurst(hitPoint, 0xffd54d, 10);
+  addBurst(hitPoint, PAL.echo, 10);
   sfx.hitmark();
   if (b.hp <= 0) {
     b.alive = false;
@@ -792,13 +805,14 @@ function botSwapViaDrone(b, drone) {
   b.swapCd = DIFF().swapCd;
   addRing(new THREE.Vector3(dronePos.x, Math.max(0.1, dronePos.y - 1), dronePos.z), b.color);
   addBurst(dronePos, b.color);
+  fx.wave(dronePos.x, dronePos.z, b.color);
   sfx.botSwap(dronePos);
 }
 
 function killDrone(drone, burstAt) {
   drone.alive = false;
   scene.remove(drone.mesh);
-  if (burstAt) addBurst(burstAt, 0x4df3ff, 14);
+  if (burstAt) addBurst(burstAt, PAL.player, 14);
   if (isVersus()) {
     const i = enemies.indexOf(drone);
     netSend({ t: 'dk', i });
@@ -891,7 +905,7 @@ function updateBot(b, dt) {
   b.group.rotation.y = Math.atan2(-toPlayer.x, -toPlayer.z) + Math.PI;
   b.hpFill.scale.x = Math.max(0.001, b.hp / BOT_HP);
   b.hpFill.position.x = -(1 - b.hp / BOT_HP) * 0.53;
-  b.hpFill.material.color.setHex(b.hp > 40 ? 0x2fe6a8 : 0xff3d6e);
+  b.hpFill.material.color.setHex(b.hp > 40 ? PAL.good : PAL.danger);
   b.barBg.lookAt(camera.position);
   b.hpFill.lookAt(camera.position);
 
@@ -940,12 +954,7 @@ function updateBot(b, dt) {
   }
 }
 
-// --- Entrées tactiles (mobile) -------------------------------------------------
-// Détection : écran tactile "grossier" ou ?touch=1 pour forcer (tests/hybrides)
-const IS_TOUCH = /[?&]touch=1/.test(location.search) ||
-  (window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0);
-if (IS_TOUCH) document.body.classList.add('touch');
-
+// --- Entrées tactiles (mobile) — IS_TOUCH est détecté en tête de fichier ---------
 const touch = { joy: new THREE.Vector2(), jumpQueued: false, dashQueued: false, moveId: null, lookId: null, lookLast: { x: 0, y: 0 }, lookStart: null, lookDrag: 0, joyCenter: { x: 0, y: 0 } };
 const JOY_RADIUS = 48;
 let layoutEdit = false;   // mode « déplacer les touches »
@@ -1289,13 +1298,13 @@ function shoot() {
   } else if (nearest === remoteT) {
     shotEnd = remoteHitPoint;
     addTracer(muzzle, shotEnd);
-    addBurst(remoteHitPoint, 0xffd54d, 10);
+    addBurst(remoteHitPoint, PAL.echo, 10);
     sfx.hitmark();
     netSend({ t: 'hit', d: PLAYER_DMG });
   } else if (nearest === remoteEchoT) {
     shotEnd = origin.clone().addScaledVector(dir, remoteEchoT);
     addTracer(muzzle, shotEnd);
-    addBurst(shotEnd, 0xffd54d, 8);
+    addBurst(shotEnd, PAL.echo, 8);
     sfx.hitmark();
     netSend({ t: 'ed', d: 25 });
   } else if (nearest === botT) {
@@ -1317,13 +1326,15 @@ function doSwap(drone) {
   const oldEyePos = eyePos();
 
   killDrone(drone, oldEyePos);
-  addRing(new THREE.Vector3(oldEyePos.x, Math.max(0.1, player.pos.y + 0.1), oldEyePos.z), 0xff3d6e);
+  addRing(new THREE.Vector3(oldEyePos.x, Math.max(0.1, player.pos.y + 0.1), oldEyePos.z), PAL.danger);
 
   player.pos.set(dronePos.x, Math.max(0, dronePos.y - EYE_HEIGHT * 0.5), dronePos.z);
   player.onGround = false;
   player.swapGrace = SWAP_GRACE;
-  addRing(new THREE.Vector3(dronePos.x, Math.max(0.1, dronePos.y - 1), dronePos.z), 0x4df3ff);
-  addBurst(dronePos, 0x4df3ff);
+  addRing(new THREE.Vector3(dronePos.x, Math.max(0.1, dronePos.y - 1), dronePos.z), PAL.player);
+  addBurst(dronePos, PAL.player);
+  fx.wave(dronePos.x, dronePos.z, PAL.player);
+  fx.punch(1);
 
   // score/combo : modes vagues et swap-only (en duel, le swap est de la mobilité)
   if (!isDuel()) {
@@ -1389,7 +1400,7 @@ function hurtPlayer(amount, sourcePos = null) {
       net.score.them += 1;
       netSend({ t: 'die', x: deathPos.x, y: Math.max(0, player.pos.y), z: deathPos.z });
       updateDuelHud();
-      addBurst(deathPos, 0xff3d6e, 40);
+      addBurst(deathPos, PAL.danger, 40);
       sfx.death();
       if (net.score.them >= DUEL_TARGET) { duelEnd(false); updateHpBar(); return; }
       // réapparition au coin le plus loin de l'adversaire
@@ -1409,7 +1420,7 @@ function hurtPlayer(amount, sourcePos = null) {
       updateDuelHud();
       if (state.duel.bot >= DUEL_TARGET) { duelEnd(false); updateHpBar(); return; }
       // réapparition immédiate loin des bots, avec grâce
-      addBurst(eyePos(), 0xff3d6e, 40);
+      addBurst(eyePos(), PAL.danger, 40);
       sfx.death();
       let best = null, bestD = -1;
       for (const [sx, sz] of [[-24, -24], [24, -24], [-24, 24], [24, 24], [0, 24], [0, -24]]) {
@@ -1636,7 +1647,8 @@ function updatePlayer(dt) {
   const jumpHeld = !frozen && (keys.has(key('jump')) || touch.jumpQueued);
   const jumpEdge = jumpHeld && !player.jumpHeld;
   player.jumpHeld = jumpHeld;
-  const dashHeld = !frozen && (keys.has(key('dash')) || touch.dashQueued);
+  // le dash est disponible dans TOUS les modes, y compris Swap only
+  const dashHeld = keys.has(key('dash')) || touch.dashQueued;
   const dashEdge = dashHeld && !player.dashHeld;
   player.dashHeld = dashHeld;
   touch.jumpQueued = false;
@@ -1646,18 +1658,20 @@ function updatePlayer(dt) {
   player.dashTime = Math.max(0, player.dashTime - dt);
 
   if (dashEdge && player.dashCd <= 0) {
-    // impulsion dans la direction du déplacement, ou du regard si immobile
-    const dir = wish.lengthSq() > 0.01
-      ? wish.clone().normalize()
-      : new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    // impulsion dans la direction du REGARD (yaw + pitch) : viser en l'air et
+    // dasher = s'envoler, viser le sol en l'air = piqué ; au sol on ne pique pas
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
     player.vel.x = dir.x * DASH_SPEED;
     player.vel.z = dir.z * DASH_SPEED;
-    if (player.vel.y < 0) player.vel.y = 0;   // le dash "porte" brièvement
+    player.vel.y = (player.onGround && dir.y < 0) ? 0 : dir.y * DASH_SPEED;
     player.dashTime = DASH_TIME;
     player.dashCd = DASH_CD;
-    player.dashDir = dir;
+    // pour la friction pendant le dash, on garde la composante horizontale
+    const flat = new THREE.Vector3(dir.x, 0, dir.z);
+    player.dashDir = flat.lengthSq() > 1e-4 ? flat.normalize() : null;
     player.fovPunch = Math.max(player.fovPunch, 0.6);
-    addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.8, player.pos.z), 0x4df3ff, 12);
+    fx.punch(0.35);
+    addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.8, player.pos.z), PAL.player, 12);
     beep({ type: 'sawtooth', from: 320, to: 70, dur: 0.16, gain: 0.11 });
   }
 
@@ -1673,7 +1687,7 @@ function updatePlayer(dt) {
     // DOUBLE SAUT
     player.airJumps--;
     player.vel.y = AIR_JUMP_SPEED;
-    addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.2, player.pos.z), 0x9be8ff, 10);
+    addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.2, player.pos.z), PAL.playerSoft, 10);
     beep({ type: 'sine', from: 420, to: 760, dur: 0.12, gain: 0.1 });
   }
 
@@ -1748,7 +1762,7 @@ function updateEnemies(dt) {
         droneRespawns.splice(i, 1);
         const p = randomDronePos(8);
         spawnEnemy(p.x, p.y, p.z);
-        addRing(new THREE.Vector3(p.x, p.y, p.z), 0x4df3ff);
+        addRing(new THREE.Vector3(p.x, p.y, p.z), PAL.player);
       }
     }
     return;
@@ -1788,7 +1802,7 @@ function updateProjectiles(dt) {
     }
 
     if (hit) hurtPlayer(12 + state.wave * 1.5, p.mesh.position);
-    if (inWall) addBurst(p.mesh.position, 0xffd54d, 6);
+    if (inWall) addBurst(p.mesh.position, PAL.echo, 6);
     if (hit || out || inWall || p.life <= 0) {
       scene.remove(p.mesh);
       projectiles.splice(i, 1);
@@ -1858,7 +1872,7 @@ const net = {
 };
 
 // avatar de l'adversaire (rouge) — même silhouette que les bots
-const remote = makeBot(0xff3d6e);
+const remote = makeBot(PAL.danger);
 remote.target = new THREE.Vector3();
 remote.yawT = 0;
 
@@ -1868,12 +1882,12 @@ function buildPillar(pos) {
   const group = new THREE.Group();
   const beam = new THREE.Mesh(
     new THREE.CylinderGeometry(0.5, 0.5, 14, 16, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffd54d, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.MeshBasicMaterial({ color: PAL.echo, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
   );
   beam.position.y = 7;
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.7, 0.95, 32),
-    new THREE.MeshBasicMaterial({ color: 0xffd54d, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.MeshBasicMaterial({ color: PAL.echo, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.12;
@@ -1963,7 +1977,7 @@ function onNetData(msg) {
       remote.alive = true;
       break;
     case 'shoot':
-      addTracer(new THREE.Vector3(...msg.a), new THREE.Vector3(...msg.b), 0xff3d6e);
+      addTracer(new THREE.Vector3(...msg.a), new THREE.Vector3(...msg.b), PAL.danger);
       sfx.botShot(new THREE.Vector3(...msg.a));
       break;
     case 'hit':   // je suis touché (le tireur décide, je suis autoritaire sur mes PV)
@@ -1973,7 +1987,7 @@ function onNetData(msg) {
       const pos = new THREE.Vector3(msg.x, msg.y, msg.z);
       net.score.me += 1;
       updateDuelHud();
-      addBurst(pos.clone().setY(pos.y + 1.4), 0xff3d6e, 40);
+      addBurst(pos.clone().setY(pos.y + 1.4), PAL.danger, 40);
       sfx.botDeath(pos);
       if (net.score.me >= DUEL_TARGET) { duelEnd(true); break; }
       createEcho(pos);
@@ -1985,7 +1999,8 @@ function onNetData(msg) {
         const pos = e.mesh.position.clone();
         e.alive = false;
         scene.remove(e.mesh);
-        addBurst(pos, 0x4df3ff, 14);
+        addBurst(pos, PAL.player, 14);
+        fx.wave(pos.x, pos.z, PAL.danger);
         sfx.botSwap(pos);
         if (net.isHost) net.respawns.push({ time: DRONE_RESPAWN, i: msg.i });
       }
@@ -2015,7 +2030,7 @@ function reviveDrone(i, x, y, z) {
   e.mesh.position.set(x, y, z);
   scene.add(e.mesh);
   e.alive = true;
-  addRing(new THREE.Vector3(x, y, z), 0x4df3ff);
+  addRing(new THREE.Vector3(x, y, z), PAL.player);
 }
 
 function startStateLoop() {
@@ -2050,7 +2065,7 @@ function netUpdate(dt) {
     remote.group.rotation.y = remote.yawT + Math.PI;
     remote.hpFill.scale.x = Math.max(0.001, remote.hp / 100);
     remote.hpFill.position.x = -(1 - remote.hp / 100) * 0.53;
-    remote.hpFill.material.color.setHex(remote.hp > 40 ? 0x2fe6a8 : 0xff3d6e);
+    remote.hpFill.material.color.setHex(remote.hp > 40 ? PAL.good : PAL.danger);
     remote.barBg.lookAt(camera.position);
     remote.hpFill.lookAt(camera.position);
   }
@@ -2096,7 +2111,7 @@ function step(dt) {
   }
   updateEffects(dt);
   updateDmgIndicators(dt);
-  renderer.render(scene, camera);
+  fx.render(dt);
 }
 function tick() {
   requestAnimationFrame(tick);
@@ -2109,6 +2124,7 @@ window.__game = {
   applySettings, step, shoot, resetGame, raycastWorld, hasLOS, damageBot, hurtPlayer,
   useEcho, getEcho: () => echo, damageEcho, DIFFICULTIES, DIFF, touch, IS_TOUCH, VERSION,
   net, remote, hostGame, joinGame, getRemoteEcho: () => remoteEcho, netUpdate,
+  getFx: () => fx, PAL, camera, renderer,
 };
 
 // caméra de menu
