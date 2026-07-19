@@ -3,7 +3,7 @@ import { Peer } from 'peerjs';
 import '@fontsource/press-start-2p';
 import { PAL, createFX } from './fx.js';
 
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -64,6 +64,8 @@ const deathStats = $('death-stats');
 const overlayTitle = overlay.querySelector('h1');
 const modeButtons = $('mode-buttons');
 const resumeCta = $('resume-cta');
+const quitCta = $('quit-cta');
+const titleHtml = overlayTitle.innerHTML;   // titre d'origine, restauré au retour menu
 const waveLabel = document.querySelector('#wave-panel .label');
 
 // --- Rendu -----------------------------------------------------------------
@@ -1065,6 +1067,7 @@ if (IS_TOUCH) {
     deathStats.style.display = 'none';
     modeButtons.style.display = 'none';
     resumeCta.style.display = '';
+    quitCta.style.display = '';
     overlay.classList.remove('hidden');
     state.phase = 'paused';
   }, { passive: false });
@@ -1173,6 +1176,21 @@ overlay.addEventListener('click', () => {
   }
 });
 
+// quitter la partie depuis la pause : retour au titre (score abandonné) ;
+// en ligne, on coupe la connexion — l'adversaire verra « ADVERSAIRE PARTI »
+quitCta.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (state.phase !== 'paused') return;
+  state.phase = 'menu';
+  if (isVersus()) cleanupNet();
+  overlayTitle.innerHTML = titleHtml;
+  deathStats.style.display = 'none';
+  modeButtons.style.display = '';
+  resumeCta.style.display = 'none';
+  quitCta.style.display = 'none';
+  overlay.classList.remove('hidden');
+});
+
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === renderer.domElement) {
     state.phase = 'playing';
@@ -1182,6 +1200,7 @@ document.addEventListener('pointerlockchange', () => {
     deathStats.style.display = 'none';
     modeButtons.style.display = 'none';
     resumeCta.style.display = '';
+    quitCta.style.display = '';
     overlay.classList.remove('hidden');
     state.phase = 'paused';
   }
@@ -1462,6 +1481,7 @@ function showEndOverlay(title, stats) {
   deathStats.textContent = stats;
   modeButtons.style.display = '';
   resumeCta.style.display = 'none';
+  quitCta.style.display = 'none';
   overlay.classList.remove('hidden');
 }
 

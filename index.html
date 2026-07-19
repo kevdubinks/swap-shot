@@ -139,6 +139,11 @@
       animation: pulse 1.6s ease-in-out infinite;
     }
     #death-stats { font-family: var(--font-arcade); font-size: 13px; line-height: 1.7; color: var(--echo); display: none; }
+    #overlay .cta.quit {
+      background: transparent; color: var(--danger);
+      border: 1px solid rgba(255, 61, 110, 0.55); box-shadow: 0 0 14px rgba(255, 61, 110, 0.25);
+      animation: none;
+    }
     @keyframes pulse { 50% { transform: scale(1.05); } }
 
     /* --- contrôles tactiles (activés via body.touch) --- */
@@ -480,6 +485,7 @@
     </div>
     <div id="multi-status"></div>
     <div class="cta" id="resume-cta" style="display:none">Cliquer pour reprendre</div>
+    <div class="cta quit" id="quit-cta" style="display:none">Quitter la partie</div>
   </div>
 
   <script type="module" src="/src/main.js"></script>
