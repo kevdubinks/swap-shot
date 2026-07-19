@@ -3,7 +3,7 @@ import { Peer } from 'peerjs';
 import '@fontsource/press-start-2p';
 import { PAL, createFX } from './fx.js';
 
-const VERSION = '0.9.2';
+const VERSION = '0.10.0';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -32,7 +32,8 @@ const COMBO_WINDOW = 3.0;
 const SWAP_GRACE = 0.6;
 
 const DUEL_TARGET = 5;        // kills pour gagner le duel
-const DUEL_DRONES = 6;        // drones neutres maintenus dans l'arène
+const DUEL2V2_TARGET = 10;    // kills cumulés d'équipe pour gagner le 2v2
+const DUEL_DRONES = 6;        // drones neutres maintenus dans l'arène (8 en 2v2)
 const DRONE_RESPAWN = 5;      // s avant réapparition d'un drone neutre
 const BOT_HP = 100;
 const BOT_MOVE_SPEED = 8;     // léger handicap vs joueur (9)
@@ -701,8 +702,8 @@ function updateEcho(dt) {
 }
 
 // --- Les BOTS (joueurs simulés, modes duel 1v1 et 1v2) ---------------------------
-const isDuel = () => state.mode === 'duel' || state.mode === 'duel2' || state.mode === 'versus';
-const isVersus = () => state.mode === 'versus';
+const isDuel = () => state.mode === 'duel' || state.mode === 'duel2' || state.mode === 'versus' || state.mode === 'versus2';
+const isVersus = () => state.mode === 'versus' || state.mode === 'versus2';
 
 function makeBot(color) {
   const group = new THREE.Group();
@@ -1170,9 +1171,9 @@ overlay.addEventListener('click', () => {
       renderer.domElement.requestPointerLock();
     }
   } else if (net.ready && (state.phase === 'menu' || state.phase === 'dead')) {
-    // les deux joueurs sont connectés : ce clic lance le duel en ligne
+    // tout le monde est connecté : ce clic lance la partie en ligne
     net.ready = false;
-    startGame('versus');
+    startGame(net.mode);
   }
 });
 
@@ -1228,7 +1229,11 @@ function shoot() {
       for (const b of bots) {
         if (b.alive && b.grace <= 0) candidates.push(new THREE.Vector3(b.pos.x, b.pos.y + 1.0, b.pos.z));
       }
-      if (isVersus() && remote.alive) candidates.push(new THREE.Vector3(remote.pos.x, remote.pos.y + 1.0, remote.pos.z));
+      if (isVersus()) {
+        for (const rm of remotes.values()) {
+          if (rm.alive && teamOf(rm.slot) !== myTeam()) candidates.push(new THREE.Vector3(rm.pos.x, rm.pos.y + 1.0, rm.pos.z));
+        }
+      }
     }
     let bestDir = null, bestAng = 0.105;
     for (const c of candidates) {
@@ -1279,13 +1284,16 @@ function shoot() {
     }
   }
 
-  // versus : l'adversaire (2 sphères) et son écho sont des cibles
-  let remoteT = Infinity, remoteHitPoint = null, remoteEchoT = Infinity;
+  // versus : les adversaires (2 sphères chacun, jamais un coéquipier) et
+  // leurs échos sont des cibles
+  let remoteT = Infinity, remoteHitPoint = null, hitRemote = null;
+  let remoteEchoT = Infinity, remoteEchoOwner = null;
   if (isVersus()) {
-    if (remote.alive) {
+    for (const rm of remotes.values()) {
+      if (!rm.alive || teamOf(rm.slot) === myTeam()) continue;
       for (const [center, r] of [
-        [new THREE.Vector3(remote.pos.x, remote.pos.y + 1.6, remote.pos.z), 0.4 * aimAssist],
-        [new THREE.Vector3(remote.pos.x, remote.pos.y + 0.9, remote.pos.z), 0.55 * aimAssist],
+        [new THREE.Vector3(rm.pos.x, rm.pos.y + 1.6, rm.pos.z), 0.4 * aimAssist],
+        [new THREE.Vector3(rm.pos.x, rm.pos.y + 0.9, rm.pos.z), 0.55 * aimAssist],
       ]) {
         const toC = center.clone().sub(origin);
         const proj = toC.dot(dir);
@@ -1294,16 +1302,21 @@ function shoot() {
         if (closest.distanceTo(center) <= r && proj < remoteT) {
           remoteT = proj;
           remoteHitPoint = closest;
+          hitRemote = rm;
         }
       }
     }
-    if (remoteEcho) {
-      const center = remoteEcho.pos.clone().setY(remoteEcho.pos.y + 1.2);
+    for (const [slot, pe] of remoteEchoes) {
+      if (teamOf(slot) === myTeam()) continue;   // on ne détruit pas l'écho d'un allié
+      const center = pe.pos.clone().setY(pe.pos.y + 1.2);
       const toC = center.clone().sub(origin);
       const proj = toC.dot(dir);
       if (proj > 0 && proj < wallDist) {
         const closest = origin.clone().addScaledVector(dir, proj);
-        if (closest.distanceTo(center) <= 0.9) remoteEchoT = proj;
+        if (closest.distanceTo(center) <= 0.9 && proj < remoteEchoT) {
+          remoteEchoT = proj;
+          remoteEchoOwner = slot;
+        }
       }
     }
   }
@@ -1319,13 +1332,13 @@ function shoot() {
     addTracer(muzzle, shotEnd);
     addBurst(remoteHitPoint, PAL.echo, 10);
     sfx.hitmark();
-    netSend({ t: 'hit', d: PLAYER_DMG });
+    netSendTo(hitRemote.slot, { t: 'hit', d: PLAYER_DMG });
   } else if (nearest === remoteEchoT) {
     shotEnd = origin.clone().addScaledVector(dir, remoteEchoT);
     addTracer(muzzle, shotEnd);
     addBurst(shotEnd, PAL.echo, 8);
     sfx.hitmark();
-    netSend({ t: 'ed', d: 25 });
+    netSendTo(remoteEchoOwner, { t: 'ed', d: 25 });
   } else if (nearest === botT) {
     shotEnd = botHitPoint;
     addTracer(muzzle, shotEnd);
@@ -1414,18 +1427,22 @@ function hurtPlayer(amount, sourcePos = null) {
   if (player.hp <= 0) {
     player.hp = 0;
     if (isVersus()) {
-      // je suis mort : j'annonce ma mort (l'adversaire marque + gagne l'écho)
+      // je suis mort : j'annonce ma mort avec mon tueur (il marque + gagne l'écho)
       const deathPos = eyePos();
       net.score.them += 1;
-      netSend({ t: 'die', x: deathPos.x, y: Math.max(0, player.pos.y), z: deathPos.z });
+      netSend({ t: 'die', x: deathPos.x, y: Math.max(0, player.pos.y), z: deathPos.z, by: player.lastHitBy });
       updateDuelHud();
       addBurst(deathPos, PAL.danger, 40);
       sfx.death();
-      if (net.score.them >= DUEL_TARGET) { duelEnd(false); updateHpBar(); return; }
-      // réapparition au coin le plus loin de l'adversaire
+      if (net.score.them >= winTarget()) { duelEnd(false); updateHpBar(); return; }
+      // réapparition au coin le plus loin des adversaires
       let best = null, bestD = -1;
       for (const [sx, sz] of [[-24, -24], [24, -24], [-24, 24], [24, 24], [0, 24], [0, -24]]) {
-        const d = Math.hypot(sx - remote.pos.x, sz - remote.pos.z);
+        let d = Infinity;
+        for (const rm of remotes.values()) {
+          if (rm.alive && teamOf(rm.slot) !== myTeam()) d = Math.min(d, Math.hypot(sx - rm.pos.x, sz - rm.pos.z));
+        }
+        if (d === Infinity) d = 1;
         if (d > bestD) { bestD = d; best = [sx, sz]; }
       }
       player.pos.set(best[0], 0, best[1]);
@@ -1470,7 +1487,7 @@ function updateHpBar() {
 function updateDuelHud() {
   if (isVersus()) hudWave.textContent = `${net.score.me} – ${net.score.them}`;
   else hudWave.textContent = `${state.duel.player} – ${state.duel.bot}`;
-  hudEnemies.textContent = `premier à ${DUEL_TARGET}`;
+  hudEnemies.textContent = `premier à ${isVersus() ? winTarget() : DUEL_TARGET}`;
 }
 
 function showEndOverlay(title, stats) {
@@ -1540,20 +1557,32 @@ function resetGame(mode = state.mode) {
   updateHpBar();
 
   if (isVersus()) {
-    waveLabel.textContent = 'VS';
+    waveLabel.textContent = mode === 'versus2' ? '2 v 2' : 'VS';
     const drones = net.pendingDrones || Array.from({ length: DUEL_DRONES }, () => randomDronePos(8));
     for (const p of drones) spawnEnemy(p.x, p.y, p.z);
     net.score.me = 0; net.score.them = 0;
     net.respawns.length = 0;
     updateDuelHud();
-    // avatar de l'adversaire + spawns opposés
-    remote.hp = 100;
-    remote.alive = true;
-    remote.pos.set(0, 0, net.isHost ? -24 : 24);
-    remote.target.copy(remote.pos);
-    scene.add(remote.group);
-    player.pos.set(0, 0, net.isHost ? 24 : -24);
-    player.yaw = net.isHost ? 0 : Math.PI;
+    // spawns par équipe : équipe 0 au sud (z+), équipe 1 au nord ; en 2v2 les
+    // coéquipiers sont côte à côte. 1v1 : mêmes positions historiques.
+    const spawnOf = (slot) => (net.mode === 'versus2'
+      ? new THREE.Vector3(slot % 2 === 0 ? -14 : 14, 0, teamOf(slot) === 0 ? 24 : -24)
+      : new THREE.Vector3(0, 0, slot === 0 ? 24 : -24));
+    clearRemotes();
+    clearRemoteEchoes();
+    const others = net.mode === 'versus2' ? [0, 1, 2, 3].filter((s) => s !== net.slot) : [net.isHost ? 1 : 0];
+    for (const s of others) {
+      const r = getRemote(s);
+      r.hp = 100;
+      r.alive = true;
+      r.pos.copy(spawnOf(s));
+      r.target.copy(r.pos);
+      scene.add(r.group);
+    }
+    const sp = spawnOf(net.slot);
+    player.pos.copy(sp);
+    player.yaw = sp.z > 0 ? 0 : Math.PI;   // chacun regarde le centre
+    player.lastHitBy = null;
     startStateLoop();
   } else if (isDuel()) {
     const count = mode === 'duel2' ? 2 : 1;
@@ -1883,21 +1912,48 @@ const PEER_OPTS = {
   },
 };
 const net = {
-  peer: null, conn: null, isHost: false, code: null,
-  ready: false,             // connecté, en attente du clic de lancement
+  peer: null, conns: [], isHost: false, code: null,
+  mode: 'versus',           // 'versus' (1v1) ou 'versus2' (2v2) — fixé par l'hôte
+  slot: 0,                  // mon identité : hôte = 0, invités = 1..3 (ordre d'arrivée)
+  needed: 1,                // nombre d'invités attendus (1 en 1v1, 3 en 2v2)
+  ready: false,             // tout le monde est là, en attente du clic de lancement
   pendingDrones: null,      // positions des drones décidées par l'hôte
-  score: { me: 0, them: 0 },
+  score: { me: 0, them: 0 },   // en 2v2 : MON équipe / l'autre
   respawns: [],             // hôte : [{ time, i }] respawns de drones à diffuser
-  stateInterval: null,
+  stateInterval: null, joinTimeout: null,
 };
+// équipes : 1v1 = chacun la sienne ; 2v2 = hôte + 1er arrivé (slots 0-1) vs 2e + 3e (2-3)
+const teamOf = (slot) => (net.mode === 'versus2' ? (slot < 2 ? 0 : 1) : slot);
+const myTeam = () => teamOf(net.slot);
+const winTarget = () => (net.mode === 'versus2' ? DUEL2V2_TARGET : DUEL_TARGET);
 
-// avatar de l'adversaire (rouge) — même silhouette que les bots
-const remote = makeBot(PAL.danger);
-remote.target = new THREE.Vector3();
-remote.yawT = 0;
+// avatars des joueurs distants (slot → même silhouette que les bots) :
+// coéquipier vert menthe, adversaires rose et violet
+const remotes = new Map();
+function remoteColor(slot) {
+  if (net.mode !== 'versus2') return PAL.danger;
+  if (teamOf(slot) === myTeam()) return PAL.good;
+  const foes = [0, 1, 2, 3].filter((s) => teamOf(s) !== myTeam());
+  return slot === foes[0] ? PAL.danger : PAL.bot2;
+}
+function getRemote(slot) {
+  if (!remotes.has(slot)) {
+    const r = makeBot(remoteColor(slot));
+    r.target = new THREE.Vector3();
+    r.yawT = 0;
+    r.slot = slot;
+    r.alive = false;
+    remotes.set(slot, r);
+  }
+  return remotes.get(slot);
+}
+function clearRemotes() {
+  for (const r of remotes.values()) scene.remove(r.group);
+  remotes.clear();
+}
 
-// pilier d'écho de l'ADVERSAIRE (visible et destructible chez nous)
-let remoteEcho = null;
+// piliers d'écho des joueurs distants (slot du propriétaire → pilier)
+const remoteEchoes = new Map();
 function buildPillar(pos) {
   const group = new THREE.Group();
   const beam = new THREE.Mesh(
@@ -1916,24 +1972,52 @@ function buildPillar(pos) {
   scene.add(group);
   return { group, beam, ring, pos: pos.clone() };
 }
-function removeRemoteEcho() {
-  if (!remoteEcho) return;
-  scene.remove(remoteEcho.group);
-  remoteEcho = null;
+function removeRemoteEcho(slot) {
+  const pe = remoteEchoes.get(slot);
+  if (!pe) return;
+  scene.remove(pe.group);
+  remoteEchoes.delete(slot);
+}
+function clearRemoteEchoes() {
+  for (const slot of [...remoteEchoes.keys()]) removeRemoteEcho(slot);
 }
 
 const multiStatus = $('multi-status');
 function netStatus(msg) { multiStatus.textContent = msg; }
-function netSend(obj) { if (net.conn && net.conn.open) net.conn.send(obj); }
 
-function hostGame() {
+// diffuse à tous mes pairs directs (hôte : les invités ; invité : l'hôte seul)
+function netSend(obj) {
+  obj.from = net.slot;
+  for (const c of net.conns) if (c.open) c.send(obj);
+}
+// message ciblé : l'hôte livre directement, l'invité poste à l'hôte qui route via obj.to
+function netSendTo(slot, obj) {
+  obj.from = net.slot;
+  obj.to = slot;
+  if (net.isHost) {
+    const c = net.conns.find((x) => x.slot === slot);
+    if (c && c.open) c.send(obj);
+  } else {
+    for (const c of net.conns) if (c.open) c.send(obj);
+  }
+}
+
+function hostGame(mode) {
   cleanupNet();
   net.isHost = true;
+  net.mode = mode;
+  net.slot = 0;
+  net.needed = mode === 'versus2' ? 3 : 1;
   net.code = Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
   netStatus('Création de la partie…');
   net.peer = new Peer('swapshot-' + net.code, PEER_OPTS);
-  net.peer.on('open', () => netStatus(`CODE : ${net.code} — partage-le à ton adversaire…`));
-  net.peer.on('connection', (c) => { net.conn = c; wireConn(); });
+  net.peer.on('open', () => netStatus(`CODE : ${net.code} — partage-le (${net.needed} joueur${net.needed > 1 ? 's' : ''} attendu${net.needed > 1 ? 's' : ''})…`));
+  net.peer.on('connection', (c) => {
+    if (net.conns.length >= net.needed || net.ready) { try { c.close(); } catch { /* tant pis */ } return; }
+    c.slot = net.conns.length + 1;   // identité fixée par l'ordre d'arrivée
+    net.conns.push(c);
+    wireConn(c);
+  });
   net.peer.on('error', (e) => netStatus('Erreur réseau : ' + e.type));
 }
 
@@ -1944,73 +2028,126 @@ function joinGame(code) {
   netStatus('Connexion…');
   net.peer = new Peer(PEER_OPTS);
   net.peer.on('open', () => {
-    net.conn = net.peer.connect('swapshot-' + code.toUpperCase().trim());
-    wireConn();
+    const c = net.peer.connect('swapshot-' + code.toUpperCase().trim());
+    net.conns.push(c);
+    wireConn(c);
   });
   net.peer.on('error', (e) => netStatus('Erreur : ' + e.type + ' (code invalide ?)'));
   // au-delà de 25 s sans canal ouvert, on arrête d'espérer et on explique
   net.joinTimeout = setTimeout(() => {
-    if (!net.conn || !net.conn.open) {
+    if (!net.conns[0] || !net.conns[0].open) {
       cleanupNet();
       netStatus('Connexion impossible — réessaie ; si ça persiste, un des deux réseaux bloque le pair-à-pair.');
     }
   }, 25000);
 }
 
-function wireConn() {
-  const c = net.conn;
+// l'hôte a tout son monde : il fige les drones et prévient tout le monde
+function hostLaunch() {
+  const drones = Array.from({ length: net.mode === 'versus2' ? DUEL_DRONES + 2 : DUEL_DRONES }, () => randomDronePos(8));
+  net.pendingDrones = drones;
+  netSend({ t: 'start', drones, mode: net.mode });
+  net.ready = true;
+  netStatus(net.mode === 'versus2'
+    ? 'Équipes : toi + 1er arrivé VS les deux autres — CLIQUE pour lancer !'
+    : 'Adversaire connecté — CLIQUE pour lancer le duel !');
+}
+
+function wireConn(c) {
   c.on('open', () => {
     if (net.joinTimeout) { clearTimeout(net.joinTimeout); net.joinTimeout = null; }
     if (net.isHost) {
-      const drones = Array.from({ length: DUEL_DRONES }, () => randomDronePos(8));
-      net.pendingDrones = drones;
-      netSend({ t: 'start', drones });
-      net.ready = true;
-      netStatus('Adversaire connecté — CLIQUE pour lancer le duel !');
+      // l'invité apprend son identité et le format de la partie
+      c.send({ t: 'hello', from: 0, slot: c.slot, mode: net.mode });
+      if (net.conns.length >= net.needed) hostLaunch();
+      else netStatus(`CODE : ${net.code} — ${net.conns.length + 1}/${net.needed + 1} joueurs…`);
     } else {
       netStatus('Connecté ! Synchronisation…');
     }
   });
-  c.on('data', onNetData);
+  c.on('data', (msg) => onNetData(msg, c));
   c.on('close', () => {
-    if (isVersus() && (state.phase === 'playing' || state.phase === 'paused')) {
-      showEndOverlay('ADVERSAIRE PARTI', `${net.score.me} – ${net.score.them}`);
+    const inGame = isVersus() && (state.phase === 'playing' || state.phase === 'paused');
+    if (net.isHost) {
+      // un invité est parti : on prévient les autres, la partie ne peut plus se jouer
+      net.conns = net.conns.filter((x) => x !== c);
+      netSend({ t: 'left' });
     }
+    if (inGame) showEndOverlay('JOUEUR PARTI', `${net.score.me} – ${net.score.them}`);
     netStatus('Déconnecté.');
     net.ready = false;
     stopStateLoop();
   });
 }
 
-function onNetData(msg) {
+function onNetData(msg, conn) {
   if (!msg || typeof msg.t !== 'string') return;
+  if (net.isHost && conn) {
+    msg.from = conn.slot;   // l'hôte fait foi sur l'identité, pas le message
+    // routage relais : message ciblé → livré au destinataire seul ;
+    // diffusion → traitée ici PUIS répétée aux autres invités
+    if (msg.to !== undefined && msg.to !== 0) {
+      const dest = net.conns.find((x) => x.slot === msg.to);
+      if (dest && dest.open) dest.send(msg);
+      return;
+    }
+    if (msg.to === undefined) {
+      for (const c of net.conns) if (c !== conn && c.open) c.send(msg);
+    }
+  }
+  const from = msg.from ?? (net.isHost ? 1 : 0);
   switch (msg.t) {
+    case 'hello':   // l'hôte m'annonce mon identité et le format
+      net.slot = msg.slot;
+      net.mode = msg.mode;
+      if (msg.mode === 'versus2') netStatus(`Connecté (joueur ${msg.slot + 1}/4) — en attente des autres…`);
+      break;
+    case 'left':    // quelqu'un est parti : la partie ne peut plus se jouer
+      if (isVersus() && (state.phase === 'playing' || state.phase === 'paused')) {
+        showEndOverlay('JOUEUR PARTI', `${net.score.me} – ${net.score.them}`);
+      }
+      netStatus('Un joueur est parti.');
+      net.ready = false;
+      stopStateLoop();
+      break;
     case 'start':
       net.pendingDrones = msg.drones;
+      net.mode = msg.mode || 'versus';
       net.ready = true;
-      netStatus('Prêt — CLIQUE pour lancer le duel !');
+      netStatus(net.mode === 'versus2'
+        ? (teamOf(net.slot) === 0 ? 'Équipe CYAN (avec l\'hôte) — CLIQUE pour lancer !' : 'Équipe ROSE (avec l\'autre invité) — CLIQUE pour lancer !')
+        : 'Prêt — CLIQUE pour lancer le duel !');
       break;
-    case 's':   // état de l'adversaire (~15 Hz)
-      remote.target.set(msg.p[0], msg.p[1], msg.p[2]);
-      remote.yawT = msg.yaw;
-      remote.hp = msg.hp;
-      remote.alive = true;
+    case 's': {   // état d'un joueur distant (~15 Hz)
+      const r = getRemote(from);
+      r.target.set(msg.p[0], msg.p[1], msg.p[2]);
+      r.yawT = msg.yaw;
+      r.hp = msg.hp;
+      if (!r.alive) { r.alive = true; r.pos.copy(r.target); scene.add(r.group); }
       break;
+    }
     case 'shoot':
-      addTracer(new THREE.Vector3(...msg.a), new THREE.Vector3(...msg.b), PAL.danger);
+      addTracer(new THREE.Vector3(...msg.a), new THREE.Vector3(...msg.b),
+        teamOf(from) === myTeam() ? PAL.good : PAL.danger);
       sfx.botShot(new THREE.Vector3(...msg.a));
       break;
-    case 'hit':   // je suis touché (le tireur décide, je suis autoritaire sur mes PV)
-      hurtPlayer(msg.d, remote.pos.clone().setY(remote.pos.y + 1.5));
+    case 'hit': {   // je suis touché (le tireur décide, je suis autoritaire sur mes PV)
+      const shooter = remotes.get(from);
+      player.lastHitBy = from;
+      hurtPlayer(msg.d, shooter ? shooter.pos.clone().setY(shooter.pos.y + 1.5) : null);
       break;
-    case 'die': { // je l'ai tué : point, écho à l'endroit de sa mort
+    }
+    case 'die': { // un joueur est mort : son tueur marque (et gagne l'écho si c'est moi)
       const pos = new THREE.Vector3(msg.x, msg.y, msg.z);
-      net.score.me += 1;
+      const killer = msg.by ?? net.slot;
+      if (teamOf(killer) === myTeam()) net.score.me += 1;
+      else net.score.them += 1;
       updateDuelHud();
       addBurst(pos.clone().setY(pos.y + 1.4), PAL.danger, 40);
       sfx.botDeath(pos);
-      if (net.score.me >= DUEL_TARGET) { duelEnd(true); break; }
-      createEcho(pos);
+      if (net.score.me >= winTarget()) { duelEnd(true); break; }
+      if (net.score.them >= winTarget()) { duelEnd(false); break; }
+      if (killer === net.slot) createEcho(pos);
       break;
     }
     case 'dk': { // il a consommé un drone (= il vient de swap dessus)
@@ -2020,7 +2157,7 @@ function onNetData(msg) {
         e.alive = false;
         scene.remove(e.mesh);
         addBurst(pos, PAL.player, 14);
-        fx.wave(pos.x, pos.z, PAL.danger);
+        fx.wave(pos.x, pos.z, teamOf(from) === myTeam() ? PAL.good : PAL.danger);
         sfx.botSwap(pos);
         if (net.isHost) net.respawns.push({ time: DRONE_RESPAWN, i: msg.i });
       }
@@ -2029,12 +2166,12 @@ function onNetData(msg) {
     case 'ds': // l'hôte fait réapparaître un drone
       reviveDrone(msg.i, msg.x, msg.y, msg.z);
       break;
-    case 'es': // son écho apparaît chez moi (je peux le camper... ou le détruire)
-      removeRemoteEcho();
-      remoteEcho = buildPillar(new THREE.Vector3(msg.x, msg.y, msg.z));
+    case 'es': // l'écho d'un joueur apparaît chez moi
+      removeRemoteEcho(from);
+      remoteEchoes.set(from, buildPillar(new THREE.Vector3(msg.x, msg.y, msg.z)));
       break;
     case 'eg':
-      removeRemoteEcho();
+      removeRemoteEcho(from);
       break;
     case 'ed': // il tire sur MON écho
       damageEcho(msg.d);
@@ -2068,31 +2205,32 @@ function stopStateLoop() {
 function cleanupNet() {
   stopStateLoop();
   if (net.joinTimeout) { clearTimeout(net.joinTimeout); net.joinTimeout = null; }
-  try { if (net.conn) net.conn.close(); } catch { /* déjà fermée */ }
+  for (const c of net.conns) { try { c.close(); } catch { /* déjà fermée */ } }
   try { if (net.peer) net.peer.destroy(); } catch { /* déjà détruit */ }
-  net.conn = null; net.peer = null; net.ready = false; net.pendingDrones = null;
+  net.conns = []; net.peer = null; net.ready = false; net.pendingDrones = null;
+  net.slot = 0; net.needed = 1;
   net.respawns.length = 0;
-  scene.remove(remote.group);
-  remote.alive = false;
-  removeRemoteEcho();
+  clearRemotes();
+  clearRemoteEchoes();
 }
 
-// mise à jour par frame côté rendu : interpolation de l'adversaire + respawns hôte
+// mise à jour par frame côté rendu : interpolation des joueurs distants + respawns hôte
 function netUpdate(dt) {
-  if (remote.alive) {
-    remote.pos.lerp(remote.target, Math.min(1, dt * 12));
-    remote.group.position.copy(remote.pos);
-    remote.group.rotation.y = remote.yawT + Math.PI;
-    remote.hpFill.scale.x = Math.max(0.001, remote.hp / 100);
-    remote.hpFill.position.x = -(1 - remote.hp / 100) * 0.53;
-    remote.hpFill.material.color.setHex(remote.hp > 40 ? PAL.good : PAL.danger);
-    remote.barBg.lookAt(camera.position);
-    remote.hpFill.lookAt(camera.position);
+  for (const r of remotes.values()) {
+    if (!r.alive) continue;
+    r.pos.lerp(r.target, Math.min(1, dt * 12));
+    r.group.position.copy(r.pos);
+    r.group.rotation.y = r.yawT + Math.PI;
+    r.hpFill.scale.x = Math.max(0.001, r.hp / 100);
+    r.hpFill.position.x = -(1 - r.hp / 100) * 0.53;
+    r.hpFill.material.color.setHex(r.hp > 40 ? PAL.good : PAL.danger);
+    r.barBg.lookAt(camera.position);
+    r.hpFill.lookAt(camera.position);
   }
-  if (remoteEcho) {
+  for (const pe of remoteEchoes.values()) {
     const pulse = 1 + 0.15 * Math.sin(state.time * 6);
-    remoteEcho.ring.scale.set(pulse, pulse, 1);
-    remoteEcho.beam.material.opacity = 0.16 + 0.08 * Math.sin(state.time * 4);
+    pe.ring.scale.set(pulse, pulse, 1);
+    pe.beam.material.opacity = 0.16 + 0.08 * Math.sin(state.time * 4);
   }
   if (net.isHost) {
     for (let i = net.respawns.length - 1; i >= 0; i--) {
@@ -2108,7 +2246,8 @@ function netUpdate(dt) {
   }
 }
 
-$('multi-host').addEventListener('click', (e) => { e.stopPropagation(); ensureAudio(); hostGame(); });
+$('multi-host').addEventListener('click', (e) => { e.stopPropagation(); ensureAudio(); hostGame('versus'); });
+$('multi-host2').addEventListener('click', (e) => { e.stopPropagation(); ensureAudio(); hostGame('versus2'); });
 $('multi-join').addEventListener('click', (e) => { e.stopPropagation(); ensureAudio(); joinGame($('multi-code').value); });
 $('multi-code').addEventListener('click', (e) => e.stopPropagation());
 $('multi-code').addEventListener('keydown', (e) => e.stopPropagation());
@@ -2143,7 +2282,7 @@ window.__game = {
   state, player, bots, botPool, enemies, projectiles, platforms, settings, dmgIndicators,
   applySettings, step, shoot, resetGame, raycastWorld, hasLOS, damageBot, hurtPlayer,
   useEcho, getEcho: () => echo, damageEcho, DIFFICULTIES, DIFF, touch, IS_TOUCH, VERSION,
-  net, remote, hostGame, joinGame, getRemoteEcho: () => remoteEcho, netUpdate,
+  net, remotes, getRemote, hostGame, joinGame, getRemoteEchoes: () => remoteEchoes, netUpdate,
   getFx: () => fx, PAL, camera, renderer,
 };
 
