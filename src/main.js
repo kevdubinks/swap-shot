@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { Peer } from 'peerjs';
 import '@fontsource/press-start-2p';
 import { PAL, createFX } from './fx.js';
+import { createViewmodel } from './viewmodel.js';
 
-const VERSION = '0.10.0';
+const VERSION = '0.11.0';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -381,6 +382,11 @@ for (const [x, z, w, d, top] of PLATFORM_DEFS) {
 fx = createFX(renderer, scene, camera, { arenaHalf: ARENA_HALF, wallHeight: WALL_H, isTouch: IS_TOUCH });
 fx.setQuality(settings.quality);
 
+// le « personnage » : blaster néon en 1re personne + secousses caméra
+const vm = createViewmodel(camera, scene);
+let shake = 0;
+const addShake = (a) => { shake = Math.min(0.5, shake + a); };
+
 // Rayon contre les plateformes (méthode des slabs). Retourne la distance du
 // premier impact, ou Infinity. Sert au clipping des tirs et à la ligne de vue.
 function raycastWorld(origin, dir, maxDist = Infinity) {
@@ -483,6 +489,7 @@ const state = {
   comboTimer: 0,
   waveCooldown: 0,
   time: 0,
+  hitstop: 0,              // ralenti bref au kill (game feel)
   duel: { player: 0, bot: 0 },
 };
 
@@ -679,6 +686,8 @@ function useEcho() {
   addBurst(echo.pos.clone().setY(echo.pos.y + 1.2), PAL.echo);
   fx.wave(echo.pos.x, echo.pos.z, PAL.echo);
   fx.punch(0.8);
+  vm.onSwap();
+  addShake(0.25);
   flashEl.style.opacity = '0.55';
   setTimeout(() => (flashEl.style.opacity = '0'), 70);
   beep({ type: 'sine', from: 250, to: 950, dur: 0.2, gain: 0.15 });
@@ -791,6 +800,8 @@ function damageBot(b, amount, hitPoint) {
     sfx.botDeath(b.pos);
     state.duel.player += 1;
     updateDuelHud();
+    state.hitstop = 0.06;
+    addShake(0.15);
     if (state.duel.player >= DUEL_TARGET) { duelEnd(true); return; }
     createEcho(b.pos);   // 10 s pour décider de voler sa position (E)
   }
@@ -1217,6 +1228,8 @@ document.addEventListener('mousedown', (e) => {
 function shoot() {
   sfx.shoot();
   player.fovPunch = Math.max(player.fovPunch, 0.25);
+  vm.onShoot();
+  addShake(0.05);
 
   const origin = eyePos();
   const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
@@ -1321,7 +1334,9 @@ function shoot() {
     }
   }
 
-  const muzzle = origin.clone().addScaledVector(dir, 0.8).add(new THREE.Vector3(0, -0.15, 0));
+  // départ visuel du tracer : aligné sur le canon du viewmodel (à droite, sous l'œil)
+  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  const muzzle = origin.clone().addScaledVector(dir, 0.8).addScaledVector(right, 0.16).add(new THREE.Vector3(0, -0.13, 0));
   let shotEnd;
   const nearest = Math.min(botT, droneT, remoteT, remoteEchoT);
   if (nearest === Infinity) {
@@ -1367,6 +1382,9 @@ function doSwap(drone) {
   addBurst(dronePos, PAL.player);
   fx.wave(dronePos.x, dronePos.z, PAL.player);
   fx.punch(1);
+  vm.onSwap();
+  addShake(0.3);
+  state.hitstop = 0.05;
 
   // score/combo : modes vagues et swap-only (en duel, le swap est de la mobilité)
   if (!isDuel()) {
@@ -1423,6 +1441,7 @@ function hurtPlayer(amount, sourcePos = null) {
   hurtEl.style.opacity = '1';
   setTimeout(() => (hurtEl.style.opacity = '0'), 150);
   sfx.hurt();
+  addShake(0.18);
   if (sourcePos) addDmgIndicator(sourcePos);
   if (player.hp <= 0) {
     player.hp = 0;
@@ -1720,6 +1739,7 @@ function updatePlayer(dt) {
     player.dashDir = flat.lengthSq() > 1e-4 ? flat.normalize() : null;
     player.fovPunch = Math.max(player.fovPunch, 0.6);
     fx.punch(0.35);
+    addShake(0.12);
     addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.8, player.pos.z), PAL.player, 12);
     beep({ type: 'sawtooth', from: 320, to: 70, dur: 0.16, gain: 0.11 });
   }
@@ -1729,6 +1749,11 @@ function updatePlayer(dt) {
 
   const wasGround = player.onGround;
   moveBody(player, wish, jumpHeld, dt, player.dashTime > 0 ? DASH_SPEED : MOVE_SPEED);
+
+  // traînée du dash : petites étincelles cyan semées sur le trajet
+  if (player.dashTime > 0 && Math.random() < 0.7) {
+    addBurst(new THREE.Vector3(player.pos.x, player.pos.y + 0.9, player.pos.z), PAL.player, 3);
+  }
 
   if (player.onGround) {
     player.airJumps = 1;
@@ -1749,6 +1774,14 @@ function updatePlayer(dt) {
 
   camera.position.copy(eyePos());
   camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+  // screenshake : offsets aléatoires décroissants, jamais appliqués à la visée
+  // (le tir lit player.yaw/pitch, pas la rotation caméra)
+  if (shake > 0) {
+    camera.rotation.x += (Math.random() - 0.5) * shake * 0.05;
+    camera.rotation.z += (Math.random() - 0.5) * shake * 0.07;
+    shake = Math.max(0, shake - dt * 2.2);
+  }
+  vm.update(dt, { speed: Math.hypot(player.vel.x, player.vel.z), onGround: player.onGround, dashing: player.dashTime > 0 });
   player.fovPunch = Math.max(0, player.fovPunch - dt * 3.5);
   camera.fov = settings.fov + player.fovPunch * 18;
   camera.updateProjectionMatrix();
@@ -2147,7 +2180,11 @@ function onNetData(msg, conn) {
       sfx.botDeath(pos);
       if (net.score.me >= winTarget()) { duelEnd(true); break; }
       if (net.score.them >= winTarget()) { duelEnd(false); break; }
-      if (killer === net.slot) createEcho(pos);
+      if (killer === net.slot) {
+        state.hitstop = 0.06;
+        addShake(0.15);
+        createEcho(pos);
+      }
       break;
     }
     case 'dk': { // il a consommé un drone (= il vient de swap dessus)
@@ -2256,6 +2293,11 @@ $('multi-code').addEventListener('keydown', (e) => e.stopPropagation());
 const clock = new THREE.Clock();
 function step(dt) {
   if (state.phase === 'playing') {
+    // hitstop : bref ralenti (15 % de la vitesse) après un kill
+    if (state.hitstop > 0) {
+      state.hitstop = Math.max(0, state.hitstop - dt);
+      dt *= 0.15;
+    }
     state.time += dt;
     updatePlayer(dt);
     updateEnemies(dt);

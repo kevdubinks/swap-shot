@@ -7,8 +7,8 @@ Tout est prêt à copier-coller dans **Edit game** sur https://niocecream.itch.i
 | Fichier | Où le mettre |
 |---|---|
 | `cover-630x500.png` | Cover image (vignette du jeu) |
-| `swap-gameplay.gif` | **1re position des screenshots** (un GIF en tête = le gameplay bouge dès qu'on arrive) |
-| `screenshot-1-action.png` → `4-mobile.png` | Screenshots, dans cet ordre |
+| `swap-gameplay.gif` | **1re position des screenshots** (un GIF en tête = le gameplay bouge dès qu'on arrive ; version avec le blaster viewmodel) |
+| `screenshot-1-action.png` → `5-scene.png` | Screenshots, dans cet ordre (1 = vue joueur avec l'arme et le flash de tir) |
 
 ## 2. Tagline (champ « Short description »)
 
