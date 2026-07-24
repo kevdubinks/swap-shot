@@ -32,7 +32,7 @@ Shoot a drone: it dies — and you *take its place, instantly*. Chain swaps to c
 
 **The Echo** — every kill drops a 10-second teleport anchor where your victim died. Take it… but enemies see it, can camp it, and can *destroy* it.
 
-**Also in the box:** global leaderboard with claimable nicknames, full mobile/touch support (play it on your phone!), remappable keys, dash & double-jump, CRT-retro visuals with quality presets (Auto/High/Light/Off).
+**Also in the box:** global leaderboard with claimable nicknames, full mobile/touch support (play it on your phone!), remappable keys, dash & double-jump, CRT-retro visuals with quality presets (Auto/High/Light/Off), and a fully procedural synthwave soundtrack that kicks in when the fight starts.
 
 **Controls** — WASD/ZQSD move (remappable) · mouse aim · Space double-jump · Shift dash (dashes where you look) · E echo teleport · Esc pause. Mobile: left thumb joystick, right thumb aim, tap to shoot.
 

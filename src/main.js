@@ -3,8 +3,9 @@ import { Peer } from 'peerjs';
 import '@fontsource/press-start-2p';
 import { PAL, createFX } from './fx.js';
 import { createViewmodel } from './viewmodel.js';
+import { createMusic } from './music.js';
 
-const VERSION = '0.11.0';
+const VERSION = '0.12.0';
 document.addEventListener('DOMContentLoaded', () => { $('version-tag').textContent = 'v' + VERSION; });
 if (document.readyState !== 'loading') setTimeout(() => { $('version-tag').textContent = 'v' + VERSION; }, 0);
 
@@ -88,14 +89,16 @@ const IS_TOUCH = /[?&]touch=1/.test(location.search) ||
   (window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0);
 if (IS_TOUCH) document.body.classList.add('touch');
 let fx = null;   // chaîne Rétro-Néon, assignée après la construction de l'arène
+const music = createMusic();   // nappe synthwave, initialisée au 1er geste utilisateur
 
 // --- Réglages (persistés dans localStorage) -----------------------------------
-const settings = { sens: 1.0, fov: 75, difficulty: 'normal', quality: 'auto' };
+const settings = { sens: 1.0, fov: 75, difficulty: 'normal', quality: 'auto', music: 0.6 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('swapshot-settings') || '{}'));
 } catch { /* réglages corrompus : on garde les défauts */ }
 settings.sens = THREE.MathUtils.clamp(settings.sens, 0.2, 6);
 settings.fov = THREE.MathUtils.clamp(settings.fov, 60, 120);
+settings.music = THREE.MathUtils.clamp(typeof settings.music === 'number' ? settings.music : 0.6, 0, 1);
 if (!['facile', 'normal', 'dur'].includes(settings.difficulty)) settings.difficulty = 'normal';
 if (!['auto', 'eleve', 'leger', 'off'].includes(settings.quality)) settings.quality = 'auto';
 if (typeof settings.layout !== 'object' || settings.layout === null) settings.layout = {};
@@ -136,11 +139,15 @@ function updateControlsHint() {
 
 const sensSlider = $('sens-slider');
 const fovSlider = $('fov-slider');
+const musicSlider = $('music-slider');
 function applySettings(save = true) {
   sensSlider.value = settings.sens;
   fovSlider.value = settings.fov;
+  musicSlider.value = settings.music;
   $('sens-val').textContent = settings.sens.toFixed(2);
   $('fov-val').textContent = settings.fov + '°';
+  $('music-val').textContent = Math.round(settings.music * 100) + '%';
+  music.setVolume(settings.music);
   document.querySelectorAll('#diff-row .diff-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.diff === settings.difficulty));
   document.querySelectorAll('#quality-row .diff-btn').forEach((b) =>
@@ -153,6 +160,7 @@ function applySettings(save = true) {
 }
 sensSlider.addEventListener('input', () => { settings.sens = parseFloat(sensSlider.value); applySettings(); });
 fovSlider.addEventListener('input', () => { settings.fov = parseInt(fovSlider.value, 10); applySettings(); });
+musicSlider.addEventListener('input', () => { settings.music = parseFloat(musicSlider.value); ensureAudio(); applySettings(); });
 // scopé à #diff-row : .diff-btn est aussi la classe de style des boutons des
 // panneaux (classement, clavier…) — un sélecteur global écraserait la difficulté
 document.querySelectorAll('#diff-row .diff-btn').forEach((b) =>
@@ -427,6 +435,9 @@ let audioCtx = null;
 function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume();
+  music.init(audioCtx);
+  music.setVolume(settings.music);
+  music.start();
 }
 // `at` (Vector3 optionnel) : spatialise le son — panoramique gauche/droite selon
 // la position par rapport au regard du joueur, volume atténué par la distance.
@@ -2312,6 +2323,8 @@ function step(dt) {
   }
   updateEffects(dt);
   updateDmgIndicators(dt);
+  // la musique suit la phase : batterie + basse en jeu, nappes ailleurs
+  music.setMode(state.phase === 'playing' ? 'combat' : 'menu');
   fx.render(dt);
 }
 function tick() {
@@ -2325,7 +2338,7 @@ window.__game = {
   applySettings, step, shoot, resetGame, raycastWorld, hasLOS, damageBot, hurtPlayer,
   useEcho, getEcho: () => echo, damageEcho, DIFFICULTIES, DIFF, touch, IS_TOUCH, VERSION,
   net, remotes, getRemote, hostGame, joinGame, getRemoteEchoes: () => remoteEchoes, netUpdate,
-  getFx: () => fx, PAL, camera, renderer,
+  getFx: () => fx, PAL, camera, renderer, music, ensureAudio,
 };
 
 // caméra de menu
